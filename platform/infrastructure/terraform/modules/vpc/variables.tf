@@ -33,5 +33,5 @@ variable "single_nat_gateway" {
     true  = Use a single shared NAT Gateway (dev - cost optimized)
     false = One NAT Gateway per AZ (prod - high availability)
   EOT
-  type    = bool
+  type        = bool
 }

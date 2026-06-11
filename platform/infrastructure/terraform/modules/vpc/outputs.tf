@@ -42,6 +42,7 @@ output "nat_gateway_public_ips" {
   description = "Public Elastic IPs attached to NAT Gateways"
   value       = aws_eip.nat[*].public_ip
 }
+
 # ============================================================
 # ROUTE TABLES
 # ============================================================
