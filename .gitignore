@@ -1,0 +1,111 @@
+# ============================================================
+# TERRAFORM
+# ============================================================
+
+# Terraform working directory
+**/.terraform/*
+.terraform.tfstate
+
+# Terraform state files
+*.tfstate
+*.tfstate.*
+*.tfstate.backup
+
+# Terraform lock file
+# Giữ lại nếu muốn version provider cố định giữa các môi trường
+# Bỏ comment dòng dưới nếu KHÔNG muốn commit lock file
+# .terraform.lock.hcl
+
+# Terraform plan files
+*.tfplan
+*.plan
+
+# Crash logs
+crash.log
+crash.*.log
+
+# Override files
+override.tf
+override.tf.json
+*_override.tf
+*_override.tf.json
+
+# CLI configuration
+.terraformrc
+terraform.rc
+
+# Local backend configs
+backend.hcl
+backend.local.hcl
+
+# Sensitive variables
+*.tfvars
+*.tfvars.json
+
+# Local variable files
+terraform.tfvars
+terraform.tfvars.json
+
+# ============================================================
+# AWS
+# ============================================================
+
+# AWS credentials
+.aws/
+
+# Local credential exports
+.env
+.env.*
+!.env.example
+
+# ============================================================
+# KUBERNETES
+# ============================================================
+
+# Local kubeconfig
+kubeconfig
+*.kubeconfig
+
+# ============================================================
+# HELM
+# ============================================================
+
+# Helm package artifacts
+*.tgz
+
+# ============================================================
+# LOGS
+# ============================================================
+
+*.log
+
+# ============================================================
+# IDE
+# ============================================================
+
+.vscode/
+.idea/
+
+# Visual Studio
+.vs/
+*.suo
+*.user
+*.userosscache
+*.sln.docstates
+
+# ============================================================
+# OS FILES
+# ============================================================
+
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# ============================================================
+# TEMP FILES
+# ============================================================
+
+tmp/
+temp/
+*.tmp
+*.bak
