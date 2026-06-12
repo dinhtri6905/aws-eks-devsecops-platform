@@ -123,7 +123,23 @@ variable "node_disk_size" {
 # ============================================================
 # ECR
 # ============================================================
-
+variable "ecr_repository_names" {
+  description = "List of ECR repository names to create for the Online Boutique microservices"
+  type        = list(string)
+  default = [
+    "frontend",
+    "cartservice",
+    "productcatalogservice",
+    "currencyservice",
+    "paymentservice",
+    "shippingservice",
+    "emailservice",
+    "checkoutservice",
+    "recommendationservice",
+    "adservice",
+    "loadgenerator"
+  ]
+}
 
 # ============================================================
 # RDS

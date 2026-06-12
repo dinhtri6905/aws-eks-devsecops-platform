@@ -114,6 +114,20 @@ output "kubeconfig_command" {
 # ============================================================
 # ECR
 # ============================================================
+output "ecr_repository_urls" {
+  description = "Map of microservice name to ECR repository URL"
+  value       = module.ecr.repository_urls
+}
+
+output "ecr_repository_arns" {
+  description = "Map of microservice name to ECR repository ARN"
+  value       = module.ecr.repository_arns
+}
+
+output "ecr_registry_id" {
+  description = "AWS account ID of the ECR registry"
+  value       = module.ecr.registry_id
+}
 
 
 # ============================================================

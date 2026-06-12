@@ -73,7 +73,15 @@ module "eks" {
 # ============================================================
 # ECR
 # ============================================================
+module "ecr" {
+  source = "../../modules/ecr"
 
+  project_name = var.project_name
+  environment  = var.environment
+
+  repository_names  = var.ecr_repository_names
+  eks_node_role_arn = module.iam.eks_node_group_role_arn
+}
 
 # ============================================================
 # RDS
