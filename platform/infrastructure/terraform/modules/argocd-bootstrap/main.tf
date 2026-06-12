@@ -17,7 +17,6 @@
 #   - hashicorp/kubernetes >= 2.27
 #
 # =============================================================================
-
 locals {
   name_prefix = "${var.project_name}-${var.environment}"
 
@@ -31,7 +30,6 @@ locals {
 # ============================================================
 # ARGOCD NAMESPACE
 # ============================================================
-
 resource "kubernetes_namespace" "argocd" {
   metadata {
     name   = var.argocd_namespace
@@ -45,7 +43,6 @@ resource "kubernetes_namespace" "argocd" {
 # Chart: https://argoproj.github.io/argo-helm
 # Ref:   https://artifacthub.io/packages/helm/argo/argo-cd
 # ============================================================
-
 resource "helm_release" "argocd" {
   name             = "argocd"
   repository       = "https://argoproj.github.io/argo-helm"
@@ -59,6 +56,8 @@ resource "helm_release" "argocd" {
   wait            = true
   atomic          = true  # rolls back on failure
   cleanup_on_fail = true
+
+  skip_crds = false
 
   values = [
     yamlencode({
@@ -213,7 +212,6 @@ resource "kubernetes_secret" "argocd_repo" {
 #
 # ArgoCD then continuously syncs those Applications from Git — fully automated.
 # ============================================================
-
 resource "helm_release" "argocd_root_app" {
   name       = "${local.name_prefix}-root-app"
   repository = "https://argoproj.github.io/argo-helm"
@@ -234,7 +232,7 @@ resource "helm_release" "argocd_root_app" {
         {
           name      = "${local.name_prefix}-root"
           namespace = var.argocd_namespace
-          project   = "default"
+          project   = var.argocd_project_name
 
           # Finalizer ensures child apps are cleaned up when root app is deleted
           finalizers = ["resources-finalizer.argocd.argoproj.io"]
@@ -261,6 +259,7 @@ resource "helm_release" "argocd_root_app" {
               "CreateNamespace=true",       # auto-create namespaces for child apps
               "PrunePropagationPolicy=foreground",
               "PruneLast=true",             # prune only after all resources are healthy
+              "ServerSideApply=true",
             ]
 
             # Exponential backoff retry — avoids hammering the API server on failures

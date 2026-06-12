@@ -82,7 +82,7 @@ output "cluster_endpoint" {
 
 output "cluster_ca_certificate" {
   description = "Base64-encoded certificate authority data for the cluster"
-  value       = module.eks.cluster_ca_certificate
+  value       = module.eks.cluster_certificate_authority_data
   sensitive   = true
 }
 

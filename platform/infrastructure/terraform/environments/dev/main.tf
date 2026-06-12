@@ -54,8 +54,8 @@ module "eks" {
 
   vpc_id             = module.vpc.vpc_id
   private_subnet_ids = module.vpc.private_subnet_ids
-  cluster_sg_id      = module.security_group.eks_control_plane_sg_id
-  node_sg_id         = module.security_group.eks_nodes_sg_id
+  cluster_sg_id      = module.security-group.eks_control_plane_sg_id
+  node_sg_id         = module.security-group.eks_nodes_sg_id
 
   cluster_role_arn    = module.iam.eks_cluster_role_arn
   node_group_role_arn = module.iam.eks_node_group_role_arn
@@ -99,7 +99,7 @@ module "rds" {
   environment  = var.environment
 
   private_subnet_ids = module.vpc.private_subnet_ids
-  rds_sg_id          = module.security_group.rds_sg_id
+  rds_sg_id          = module.security-group.rds_sg_id
 
   db_identifier = var.db_identifier
   db_name       = var.db_name
@@ -140,6 +140,8 @@ module "argocd-bootstrap" {
 
   project_name = var.project_name
   environment  = var.environment
+
+  argocd_project_name = var.argocd_project_name
 
   # ArgoCD Helm chart settings
   argocd_namespace          = var.argocd_namespace

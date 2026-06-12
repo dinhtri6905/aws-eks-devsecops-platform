@@ -238,6 +238,23 @@ variable "backup_retention_period" {
 # ============================================================
 # ARGOCD + GITOPS
 # ============================================================
+variable "argocd_project_name" {
+  description = "Name of the ArgoCD Project used to group and manage applications"
+  type        = string
+  default     = "platform-project"
+
+  validation {
+    condition     = length(trim(var.argocd_project_name, " ")) > 0
+    error_message = "argocd_project_name cannot be empty."
+  }
+}
+
+variable "argocd_namespace" {
+  description = "Kubernetes namespace for ArgoCD"
+  type        = string
+  default     = "argocd"
+}
+
 variable "argocd_chart_version" {
   description = "ArgoCD Helm chart version to deploy"
   type        = string
@@ -248,12 +265,6 @@ variable "argocd_apps_chart_version" {
   description = "argocd-apps Helm chart version (used to create Root Application)"
   type        = string
   default     = "2.0.2"
-}
-
-variable "argocd_namespace" {
-  description = "Kubernetes namespace for ArgoCD"
-  type        = string
-  default     = "argocd"
 }
 
 variable "argocd_server_insecure" {
@@ -271,7 +282,7 @@ variable "argocd_ha_enabled" {
 variable "gitops_repo_url" {
   description = "URL of the GitOps repository ArgoCD will watch"
   type        = string
-  # Example: "https://github.com/your-org/aws-eks-devsecops-platform"
+  default = "https://github.com/dinhtri6905/aws-eks-devsecops-platform"
 }
 
 variable "gitops_repo_branch" {

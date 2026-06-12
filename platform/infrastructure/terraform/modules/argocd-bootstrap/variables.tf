@@ -16,6 +16,28 @@ variable "project_name" {
 variable "environment" {
   description = "Deployment environment (dev, staging, prod)"
   type        = string
+
+  validation {
+    condition = contains(
+      ["dev", "staging", "prod"],
+      var.environment
+    )
+
+    error_message = "environment must be dev, staging, or prod."
+  }
+}
+
+# ============================================================
+# ArgoCD Project
+# ============================================================
+variable "argocd_project_name" {
+  description = "Name of the ArgoCD Project used to group and manage applications"
+  type        = string
+
+  validation {
+    condition     = length(trim(var.argocd_project_name, " ")) > 0
+    error_message = "argocd_project_name cannot be empty."
+  }
 }
 
 # ============================================================
@@ -24,25 +46,21 @@ variable "environment" {
 variable "argocd_namespace" {
   description = "Kubernetes namespace where ArgoCD will be installed"
   type        = string
-  default     = "argocd"
 }
 
 variable "argocd_chart_version" {
   description = "Version of the argo-cd Helm chart (pin for reproducibility)"
   type        = string
-  default     = "7.6.8"
 }
 
 variable "argocd_server_insecure" {
   description = "Run ArgoCD server without TLS (true when ALB handles TLS termination)"
   type        = bool
-  default     = true
 }
 
 variable "argocd_ha_enabled" {
   description = "Enable HA mode (multiple replicas). Set false for dev to save cost."
   type        = bool
-  default     = false
 }
 
 # ============================================================
@@ -51,7 +69,6 @@ variable "argocd_ha_enabled" {
 variable "argocd_apps_chart_version" {
   description = "Version of the argocd-apps Helm chart used to create the Root App"
   type        = string
-  default     = "2.0.2"
 }
 
 # ============================================================
@@ -73,13 +90,11 @@ variable "gitops_repo_url" {
 variable "gitops_repo_branch" {
   description = "Git branch ArgoCD will track for the Root Application"
   type        = string
-  default     = "main"
 }
 
 variable "gitops_root_app_path" {
   description = "Path in the repo containing child Application manifests (App of Apps)"
   type        = string
-  default     = "platform/gitops/argocd/apps"
 }
 
 variable "gitops_repo_ssh_private_key" {
@@ -89,6 +104,5 @@ variable "gitops_repo_ssh_private_key" {
     Set via TF_VAR_gitops_repo_ssh_private_key — never commit this value.
   EOT
   type        = string
-  default     = ""
   sensitive   = true
 }
