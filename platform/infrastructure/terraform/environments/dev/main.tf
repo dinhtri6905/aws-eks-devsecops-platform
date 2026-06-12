@@ -14,13 +14,17 @@ module "vpc" {
   single_nat_gateway   = var.single_nat_gateway
 }
 
-
 # ============================================================
 # SECURITY GROUP
 # ============================================================
 module "security-group" {
   source = "../../modules/security-group"
 
+  project_name = var.project_name
+  environment  = var.environment
+
+  vpc_id   = module.vpc.vpc_id
+  vpc_cidr = var.vpc_cidr
 }
 
 # ============================================================
