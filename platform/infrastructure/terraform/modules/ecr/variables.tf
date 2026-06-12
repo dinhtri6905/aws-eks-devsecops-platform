@@ -16,13 +16,11 @@ variable "repository_names" {
 variable "image_tag_mutability" {
   description = "Image tag mutability: MUTABLE allows overwriting tags, IMMUTABLE prevents it"
   type        = string
-  default     = "MUTABLE"
 }
 
 variable "scan_on_push" {
   description = "Enable automatic vulnerability scanning when an image is pushed"
   type        = bool
-  default     = true
 }
 
 variable "lifecycle_policy_enabled" {
@@ -34,13 +32,11 @@ variable "lifecycle_policy_enabled" {
 variable "tagged_image_keep_count" {
   description = "Number of tagged images to retain per repository"
   type        = number
-  default     = 10
 }
 
 variable "untagged_image_expiry_days" {
   description = "Number of days before untagged images are automatically removed"
   type        = number
-  default     = 7
 }
 
 variable "eks_node_role_arn" {

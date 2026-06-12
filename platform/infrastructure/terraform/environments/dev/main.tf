@@ -79,14 +79,44 @@ module "ecr" {
   project_name = var.project_name
   environment  = var.environment
 
-  repository_names  = var.ecr_repository_names
+  repository_names = var.ecr_repository_names
+
+  image_tag_mutability       = var.image_tag_mutability
+  scan_on_push               = var.scan_on_push
+  tagged_image_keep_count    = var.tagged_image_keep_count
+  untagged_image_expiry_days = var.untagged_image_expiry_days
+
   eks_node_role_arn = module.iam.eks_node_group_role_arn
 }
 
 # ============================================================
 # RDS
 # ============================================================
+module "rds" {
+  source = "../../modules/rds"
 
+  project_name = var.project_name
+  environment  = var.environment
+
+  private_subnet_ids = module.vpc.private_subnet_ids
+  rds_sg_id          = module.security_group.rds_sg_id
+
+  db_identifier = var.db_identifier
+  db_name       = var.db_name
+  db_username   = var.db_username
+  db_password   = var.db_password
+
+  allocated_storage     = var.allocated_storage
+  max_allocated_storage = var.max_allocated_storage
+
+  db_engine_version = var.db_engine_version
+  db_instance_class = var.db_instance_class
+
+  multi_az                = var.multi_az
+  backup_retention_period = var.backup_retention_period
+  deletion_protection     = false # In production, change it to "true".
+  skip_final_snapshot     = true  # In production, change it to "false".
+}
 
 # ============================================================
 # ALB

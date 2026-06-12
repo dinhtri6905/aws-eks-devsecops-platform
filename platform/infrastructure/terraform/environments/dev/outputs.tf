@@ -133,6 +133,32 @@ output "ecr_registry_id" {
 # ============================================================
 # RDS
 # ============================================================
+output "db_instance_id" {
+  description = "RDS instance identifier"
+  value       = module.rds.db_instance_id
+}
+
+output "db_instance_endpoint" {
+  description = "RDS connection endpoint in host:port format"
+  value       = module.rds.db_instance_endpoint
+  sensitive   = true
+}
+
+output "db_instance_address" {
+  description = "RDS hostname — used in application connection strings"
+  value       = module.rds.db_instance_address
+  sensitive   = true
+}
+
+output "db_instance_port" {
+  description = "RDS port"
+  value       = module.rds.db_instance_port
+}
+
+output "db_name" {
+  description = "Name of the initial database"
+  value       = module.rds.db_name
+}
 
 
 # ============================================================

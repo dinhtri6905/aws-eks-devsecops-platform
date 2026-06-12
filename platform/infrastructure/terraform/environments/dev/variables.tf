@@ -141,9 +141,93 @@ variable "ecr_repository_names" {
   ]
 }
 
+variable "image_tag_mutability" {
+  description = "Image tag mutability: MUTABLE allows overwriting tags, IMMUTABLE prevents it"
+  type        = string
+  default     = "MUTABLE"
+}
+
+variable "scan_on_push" {
+  description = "Enable automatic vulnerability scanning when an image is pushed"
+  type        = bool
+  default     = true
+}
+
+variable "tagged_image_keep_count" {
+  description = "Number of tagged images to retain per repository"
+  type        = number
+  default     = 10
+}
+
+variable "untagged_image_expiry_days" {
+  description = "Number of days before untagged images are automatically removed"
+  type        = number
+  default     = 7
+}
+
+
 # ============================================================
 # RDS
 # ============================================================
+variable "db_identifier" {
+  description = "Unique identifier for the RDS instance"
+  type        = string
+  default     = "eks-devsecops-dev-postgres"
+}
+
+variable "db_name" {
+  description = "Name of the initial database to create"
+  type        = string
+  default     = "microservices_db"
+}
+
+variable "db_username" {
+  description = "Master username for the RDS instance"
+  type        = string
+  default     = "dbadmin"
+}
+
+variable "db_password" {
+  description = "Master password for the RDS instance — set via TF_VAR_db_password, never hardcode"
+  type        = string
+  sensitive   = true
+}
+
+variable "allocated_storage" {
+  description = "Initial allocated storage in GiB"
+  type        = number
+  default     = 20
+}
+
+variable "max_allocated_storage" {
+  description = "Maximum storage autoscaling ceiling in GiB"
+  type        = number
+  default     = 100
+}
+
+variable "db_instance_class" {
+  description = "RDS instance class"
+  type        = string
+  default     = "db.t3.micro"
+}
+
+variable "db_engine_version" {
+  description = "PostgreSQL engine version"
+  type        = string
+  default     = "15.7"
+}
+
+variable "multi_az" {
+  description = "Enable Multi-AZ deployment (false for dev, true for prod)"
+  type        = bool
+  default     = false
+}
+
+variable "backup_retention_period" {
+  description = "Number of days to retain automated backups"
+  type        = number
+  default     = 7
+}
 
 
 # ============================================================
