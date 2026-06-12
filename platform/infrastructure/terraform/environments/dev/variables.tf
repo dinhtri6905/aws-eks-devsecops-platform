@@ -233,3 +233,62 @@ variable "backup_retention_period" {
 # ============================================================
 # ALB
 # ============================================================
+
+
+# ============================================================
+# ARGOCD + GITOPS
+# ============================================================
+variable "argocd_chart_version" {
+  description = "ArgoCD Helm chart version to deploy"
+  type        = string
+  default     = "7.6.8"
+}
+
+variable "argocd_apps_chart_version" {
+  description = "argocd-apps Helm chart version (used to create Root Application)"
+  type        = string
+  default     = "2.0.2"
+}
+
+variable "argocd_namespace" {
+  description = "Kubernetes namespace for ArgoCD"
+  type        = string
+  default     = "argocd"
+}
+
+variable "argocd_server_insecure" {
+  description = "Run ArgoCD in insecure mode (true when ALB terminates TLS)"
+  type        = bool
+  default     = true
+}
+
+variable "argocd_ha_enabled" {
+  description = "Enable ArgoCD High Availability (multiple replicas) — false for dev"
+  type        = bool
+  default     = false
+}
+
+variable "gitops_repo_url" {
+  description = "URL of the GitOps repository ArgoCD will watch"
+  type        = string
+  # Example: "https://github.com/your-org/aws-eks-devsecops-platform"
+}
+
+variable "gitops_repo_branch" {
+  description = "Git branch for the Root Application to track"
+  type        = string
+  default     = "main"
+}
+
+variable "gitops_root_app_path" {
+  description = "Path inside the repo that contains child Application manifests"
+  type        = string
+  default     = "platform/gitops/argocd/apps"
+}
+
+variable "gitops_repo_ssh_private_key" {
+  description = "SSH private key for a private Git repo — set via TF_VAR_gitops_repo_ssh_private_key"
+  type        = string
+  default     = ""
+  sensitive   = true
+}

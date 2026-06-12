@@ -131,3 +131,29 @@ module "alb" {
   oidc_provider_arn = module.eks.oidc_provider_arn
   oidc_issuer_url   = module.eks.oidc_issuer_url
 }
+
+# ============================================================
+# ARGOCD BOOTSTRAP
+# ============================================================
+module "argocd-bootstrap" {
+  source = "../../modules/argocd-bootstrap"
+
+  project_name = var.project_name
+  environment  = var.environment
+
+  # ArgoCD Helm chart settings
+  argocd_namespace          = var.argocd_namespace
+  argocd_chart_version      = var.argocd_chart_version
+  argocd_apps_chart_version = var.argocd_apps_chart_version
+  argocd_server_insecure    = var.argocd_server_insecure
+  argocd_ha_enabled         = var.argocd_ha_enabled
+
+  # GitOps configuration
+  gitops_repo_url             = var.gitops_repo_url
+  gitops_repo_branch          = var.gitops_repo_branch
+  gitops_root_app_path        = var.gitops_root_app_path
+  gitops_repo_ssh_private_key = var.gitops_repo_ssh_private_key
+
+  # EKS must be fully ready before ArgoCD can be installed
+  depends_on = [module.eks]
+}
