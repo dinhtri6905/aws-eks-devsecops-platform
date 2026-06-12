@@ -121,4 +121,13 @@ module "rds" {
 # ============================================================
 # ALB
 # ============================================================
+module "alb" {
+  source = "../../modules/alb"
 
+  project_name = var.project_name
+  environment  = var.environment
+  cluster_name = var.cluster_name
+
+  oidc_provider_arn = module.eks.oidc_provider_arn
+  oidc_issuer_url   = module.eks.oidc_issuer_url
+}

@@ -162,8 +162,19 @@ output "db_name" {
 
 
 # ============================================================
-# ALB
+# ALB — LBC IRSA
+# Use lbc_role_arn in the LBC Helm values:
+#   serviceAccount.annotations."eks.amazonaws.com/role-arn"
 # ============================================================
+output "lbc_role_arn" {
+  description = "IRSA role ARN for the AWS Load Balancer Controller — pass to Helm chart values"
+  value       = module.alb.lbc_role_arn
+}
+
+output "lbc_policy_arn" {
+  description = "ARN of the IAM policy attached to the LBC IRSA role"
+  value       = module.alb.lbc_policy_arn
+}
 
 
 
