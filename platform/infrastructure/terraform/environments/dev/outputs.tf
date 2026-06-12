@@ -70,7 +70,46 @@ output "rds_sg_id" {
 # ============================================================
 # EKS
 # ============================================================
+output "cluster_name" {
+  description = "Name of the EKS cluster"
+  value       = module.eks.cluster_name
+}
 
+output "cluster_endpoint" {
+  description = "Endpoint URL of the Kubernetes API server"
+  value       = module.eks.cluster_endpoint
+}
+
+output "cluster_ca_certificate" {
+  description = "Base64-encoded certificate authority data for the cluster"
+  value       = module.eks.cluster_ca_certificate
+  sensitive   = true
+}
+
+output "cluster_version" {
+  description = "Kubernetes version of the EKS cluster"
+  value       = module.eks.cluster_version
+}
+
+output "oidc_provider_arn" {
+  description = "ARN of the OIDC provider — used to create IRSA roles for platform tools"
+  value       = module.eks.oidc_provider_arn
+}
+
+output "oidc_issuer_url" {
+  description = "OIDC issuer URL of the EKS cluster"
+  value       = module.eks.oidc_issuer_url
+}
+
+output "ebs_csi_driver_role_arn" {
+  description = "ARN of the IRSA role for the EBS CSI Driver"
+  value       = module.eks.ebs_csi_driver_role_arn
+}
+
+output "kubeconfig_command" {
+  description = "AWS CLI command to update local kubeconfig"
+  value       = "aws eks update-kubeconfig --region ${var.aws_region} --name ${module.eks.cluster_name}"
+}
 
 # ============================================================
 # ECR
