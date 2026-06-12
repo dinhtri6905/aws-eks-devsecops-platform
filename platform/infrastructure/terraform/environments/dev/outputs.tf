@@ -21,6 +21,28 @@ output "nat_gateway_public_ips" {
   value       = module.vpc.nat_gateway_public_ips
 }
 
+# ============================================================
+# IAM
+# ============================================================
+output "eks_cluster_role_arn" {
+  description = "ARN of the EKS Cluster IAM Role"
+  value       = module.iam.eks_cluster_role_arn
+}
+
+output "eks_cluster_role_name" {
+  description = "Name of the EKS Cluster IAM Role"
+  value       = module.iam.eks_cluster_role_name
+}
+
+output "eks_node_group_role_arn" {
+  description = "ARN of the EKS Node Group IAM Role"
+  value       = module.iam.eks_node_group_role_arn
+}
+
+output "eks_node_group_role_name" {
+  description = "Name of the EKS Node Group IAM Role"
+  value       = module.iam.eks_node_group_role_name
+}
 
 # ============================================================
 # SECURITY GROUP
@@ -45,6 +67,24 @@ output "rds_sg_id" {
   value       = module.security-group.rds_sg_id
 }
 
+# ============================================================
+# EKS
+# ============================================================
+
+
+# ============================================================
+# ECR
+# ============================================================
+
+
+# ============================================================
+# RDS
+# ============================================================
+
+
+# ============================================================
+# ALB
+# ============================================================
 
 
 
