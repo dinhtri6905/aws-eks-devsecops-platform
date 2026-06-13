@@ -1,0 +1,330 @@
+name: Application CD
+
+# =============================================================================
+# Application CD — Build → Trivy Image Scan → Push ECR → Update Kustomize → Commit
+# Trigger: merge to main khi thay đổi microservices-application/
+#
+# Flow:
+#   detect-changes → build-and-scan (per service) → update-gitops
+#
+# GitHub Secrets:
+#   AWS_DEV_ROLE_ARN     — OIDC role cho ECR push
+#   AWS_ACCOUNT_ID       — để build ECR URI
+#   SLACK_WEBHOOK_URL
+#   GITOPS_BOT_TOKEN     — GitHub PAT cho git commit vào GitOps repo
+# =============================================================================
+
+on:
+  # push:
+  #   branches:
+  #     - main
+  #   paths:
+  #     - "microservices-application/**"
+  #     - ".github/workflows/app-cd.yaml"
+  workflow_dispatch:
+    inputs:
+      service:
+        description: "Service cần build (để trống = detect tự động)"
+        required: false
+        default: ""
+      environment:
+        description: "Target environment"
+        required: true
+        default: "dev"
+        type: choice
+        options:
+          - dev
+
+env:
+  AWS_REGION: "ap-southeast-1"
+  ECR_REGISTRY: "${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.ap-southeast-1.amazonaws.com"
+  PROJECT_NAME: "eks-devsecops"
+  KUSTOMIZE_OVERLAY_PATH: "platform/gitops/kustomize/overlays/dev/applications/online-boutique"
+
+# Chạy tuần tự — tránh concurrent push lên ECR + commit GitOps cùng lúc
+concurrency:
+  group: app-cd-${{ github.ref }}
+  cancel-in-progress: false
+
+# =============================================================================
+# JOB 1: Detect changed services
+# =============================================================================
+jobs:
+  detect-changes:
+    name: Detect Changed Services
+    runs-on: ubuntu-latest
+    outputs:
+      services: ${{ steps.detect.outputs.services }}
+      has_changes: ${{ steps.detect.outputs.has_changes }}
+      short_sha: ${{ steps.detect.outputs.short_sha }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+
+      - name: Detect changed services
+        id: detect
+        run: |
+          SHORT_SHA=$(git rev-parse --short HEAD)
+          echo "short_sha=$SHORT_SHA" >> $GITHUB_OUTPUT
+
+          # Manual override từ workflow_dispatch
+          if [ -n "${{ github.event.inputs.service }}" ]; then
+            SERVICES='["${{ github.event.inputs.service }}"]'
+            echo "services=$SERVICES" >> $GITHUB_OUTPUT
+            echo "has_changes=true" >> $GITHUB_OUTPUT
+            echo "Manual override: building ${{ github.event.inputs.service }}"
+            exit 0
+          fi
+
+          # Auto-detect từ git diff
+          CHANGED=$(git diff --name-only HEAD~1 HEAD -- microservices-application/ 2>/dev/null || \
+                    git diff --name-only HEAD -- microservices-application/)
+
+          echo "Changed files:"
+          echo "$CHANGED"
+
+          # Extract service names từ path: microservices-application/<service>/...
+          SERVICES=$(echo "$CHANGED" | \
+            grep "^microservices-application/" | \
+            cut -d'/' -f2 | \
+            sort -u | \
+            grep -v "^$" | \
+            jq -R . | jq -sc .)
+
+          echo "Detected services: $SERVICES"
+
+          if [ "$SERVICES" = "[]" ] || [ -z "$SERVICES" ]; then
+            echo "has_changes=false" >> $GITHUB_OUTPUT
+            echo "services=[]" >> $GITHUB_OUTPUT
+          else
+            echo "has_changes=true" >> $GITHUB_OUTPUT
+            echo "services=$SERVICES" >> $GITHUB_OUTPUT
+          fi
+
+# =============================================================================
+# JOB 2: Build → Trivy Image Scan → Push ECR (matrix per service)
+# =============================================================================
+  build-and-scan:
+    name: Build & Scan — ${{ matrix.service }}
+    runs-on: ubuntu-latest
+    needs: detect-changes
+    if: needs.detect-changes.outputs.has_changes == 'true'
+    permissions:
+      contents: read
+      id-token: write
+      security-events: write
+
+    strategy:
+      matrix:
+        service: ${{ fromJson(needs.detect-changes.outputs.services) }}
+      fail-fast: false  # Tiếp tục build các service khác nếu 1 service fail
+
+    outputs:
+      image_tag: ${{ needs.detect-changes.outputs.short_sha }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials via OIDC
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_DEV_ROLE_ARN }}
+          role-session-name: app-cd-build-${{ matrix.service }}-${{ github.run_id }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Login to Amazon ECR
+        id: ecr-login
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Set image metadata
+        id: meta
+        run: |
+          SERVICE="${{ matrix.service }}"
+          SHORT_SHA="${{ needs.detect-changes.outputs.short_sha }}"
+          TIMESTAMP=$(date -u '+%Y%m%d%H%M%S')
+          IMAGE_URI="${{ env.ECR_REGISTRY }}/${{ env.PROJECT_NAME }}-dev-${SERVICE}"
+
+          echo "service=$SERVICE"           >> $GITHUB_OUTPUT
+          echo "image_uri=$IMAGE_URI"       >> $GITHUB_OUTPUT
+          echo "image_tag=$SHORT_SHA"       >> $GITHUB_OUTPUT
+          echo "full_image=${IMAGE_URI}:${SHORT_SHA}" >> $GITHUB_OUTPUT
+          echo "timestamp=$TIMESTAMP"       >> $GITHUB_OUTPUT
+
+      - name: Build Docker image
+        run: |
+          SERVICE_DIR="microservices-application/${{ matrix.service }}"
+
+          if [ ! -f "$SERVICE_DIR/Dockerfile" ]; then
+            echo "⚠️ No Dockerfile found at $SERVICE_DIR/Dockerfile — skipping"
+            exit 0
+          fi
+
+          docker build \
+            --tag "${{ steps.meta.outputs.full_image }}" \
+            --tag "${{ steps.meta.outputs.image_uri }}:latest" \
+            --label "git.sha=${{ github.sha }}" \
+            --label "git.ref=${{ github.ref }}" \
+            --label "build.timestamp=${{ steps.meta.outputs.timestamp }}" \
+            --file "$SERVICE_DIR/Dockerfile" \
+            "$SERVICE_DIR"
+
+          echo "✅ Image built: ${{ steps.meta.outputs.full_image }}"
+
+      - name: Trivy image scan (SARIF — GitHub Security tab)
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: ${{ steps.meta.outputs.full_image }}
+          format: "sarif"
+          output: "trivy-image-${{ matrix.service }}.sarif"
+          severity: "CRITICAL,HIGH"
+          ignore-unfixed: true
+          exit-code: "0"  # Report only ở đây
+
+      - name: Trivy image scan (table — human readable log)
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: ${{ steps.meta.outputs.full_image }}
+          format: "table"
+          severity: "CRITICAL,HIGH"
+          ignore-unfixed: true
+          exit-code: "0"
+
+      - name: Trivy image scan (JSON — check CRITICAL count)
+        id: trivy_json
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: ${{ steps.meta.outputs.full_image }}
+          format: "json"
+          output: "trivy-image-${{ matrix.service }}.json"
+          severity: "CRITICAL"
+          ignore-unfixed: true
+          exit-code: "0"
+
+      - name: Block push if CRITICAL vulns found
+        run: |
+          REPORT="trivy-image-${{ matrix.service }}.json"
+          if [ -f "$REPORT" ]; then
+            CRITICAL=$(jq '[.Results[].Vulnerabilities[]? | select(.Severity == "CRITICAL")] | length' "$REPORT" 2>/dev/null || echo 0)
+            echo "CRITICAL vulnerabilities found: $CRITICAL"
+            if [ "$CRITICAL" -gt 0 ]; then
+              echo "❌ BLOCKING: $CRITICAL CRITICAL CVE(s) detected in ${{ matrix.service }}. Fix before pushing to ECR."
+              jq -r '.Results[].Vulnerabilities[]? | select(.Severity == "CRITICAL") | "\(.VulnerabilityID) | \(.PkgName) | \(.InstalledVersion) | \(.Title)"' "$REPORT" | head -20
+              exit 1
+            fi
+            echo "✅ No CRITICAL CVEs — safe to push."
+          fi
+
+      - name: Upload SARIF to GitHub Security tab
+        if: always()
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: trivy-image-${{ matrix.service }}.sarif
+          category: Trivy-Image-${{ matrix.service }}
+
+      - name: Push image to ECR
+        run: |
+          docker push "${{ steps.meta.outputs.full_image }}"
+          docker push "${{ steps.meta.outputs.image_uri }}:latest"
+          echo "✅ Pushed: ${{ steps.meta.outputs.full_image }}"
+          echo "✅ Pushed: ${{ steps.meta.outputs.image_uri }}:latest"
+
+      - name: Upload Trivy reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: trivy-image-${{ matrix.service }}
+          path: |
+            trivy-image-${{ matrix.service }}.sarif
+            trivy-image-${{ matrix.service }}.json
+          retention-days: 14
+
+# =============================================================================
+# JOB 3: Update Kustomize image tags + commit to GitOps repo
+# =============================================================================
+  update-gitops:
+    name: Update GitOps Manifests
+    runs-on: ubuntu-latest
+    needs: [detect-changes, build-and-scan]
+    if: needs.build-and-scan.result == 'success'
+    permissions:
+      contents: write   # Cần write để commit vào repo
+
+    steps:
+      - name: Checkout code (GitOps manifests)
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITOPS_BOT_TOKEN }}
+          fetch-depth: 1
+
+      - name: Install Kustomize
+        run: |
+          curl -sSL "https://raw.githubusercontent.com/kubernetes-sigs/kustomize/master/hack/install_kustomize.sh" | bash
+          sudo mv kustomize /usr/local/bin/
+          kustomize version
+
+      - name: Update image tags in Kustomize overlay
+        run: |
+          SHORT_SHA="${{ needs.detect-changes.outputs.short_sha }}"
+          SERVICES='${{ needs.detect-changes.outputs.services }}'
+          OVERLAY="${{ env.KUSTOMIZE_OVERLAY_PATH }}"
+
+          cd "$OVERLAY"
+          echo "Updating image tags to $SHORT_SHA in $OVERLAY"
+
+          # Update each changed service
+          echo "$SERVICES" | jq -r '.[]' | while read -r service; do
+            IMAGE_URI="${{ env.ECR_REGISTRY }}/${{ env.PROJECT_NAME }}-dev-${service}"
+            echo "  Updating $service → ${IMAGE_URI}:${SHORT_SHA}"
+            kustomize edit set image "${service}=${IMAGE_URI}:${SHORT_SHA}" || true
+          done
+
+          echo "=== Updated kustomization.yaml ==="
+          cat kustomization.yaml
+
+      - name: Commit and push changes
+        run: |
+          SHORT_SHA="${{ needs.detect-changes.outputs.short_sha }}"
+          SERVICES="${{ needs.detect-changes.outputs.services }}"
+
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+          git add ${{ env.KUSTOMIZE_OVERLAY_PATH }}/kustomization.yaml
+
+          # Only commit if there are changes
+          if git diff --staged --quiet; then
+            echo "No changes to commit — images already up to date."
+          else
+            COMMIT_MSG="chore(gitops): update image tags to ${SHORT_SHA}
+
+          Services updated: ${SERVICES}
+          GitHub Actions Run: ${{ github.run_id }}
+          Triggered by: ${{ github.actor }}
+          Commit: ${{ github.sha }}"
+
+                      git commit -m "$COMMIT_MSG"
+                      git push origin main
+
+                      echo "✅ GitOps manifest updated and pushed."
+                      echo "ArgoCD will detect this change and sync automatically."
+                    fi
+
+      - name: Notify Slack — CD Result
+        if: always()
+        uses: rtCamp/action-slack-notify@v2
+        env:
+          SLACK_WEBHOOK: ${{ secrets.SLACK_WEBHOOK_URL }}
+          SLACK_COLOR: ${{ job.status == 'success' && 'good' || 'danger' }}
+          SLACK_TITLE: "App CD — DEV ${{ job.status == 'success' && '✅' || '❌' }}"
+          SLACK_MESSAGE: |
+            Services  : ${{ needs.detect-changes.outputs.services }}
+            Image Tag : ${{ needs.detect-changes.outputs.short_sha }}
+            Status    : ${{ job.status }}
+            Actor     : ${{ github.actor }}
+            ArgoCD    : Đang sync tự động...
+            Run       : ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          SLACK_FOOTER: "EKS DevSecOps Platform | App CD"

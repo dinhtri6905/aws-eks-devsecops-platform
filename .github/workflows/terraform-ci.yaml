@@ -1,0 +1,434 @@
+name: Terraform CI
+
+# =============================================================================
+# Chạy trên push lên develop/feature và Pull Request vào develop.
+# Không cần AWS credentials — tất cả bước dùng -backend=false.
+#
+# Jobs:
+#   validate → (tflint, tfsec, checkov) song song → ci-summary
+#
+# GitHub Secrets cần thiết:
+#   SLACK_WEBHOOK_URL
+# =============================================================================
+
+on:
+  push:
+    branches:
+      - develop
+      - "feature/**"
+    paths:
+      - "platform/infrastructure/terraform/environments/dev/**"
+      - "platform/infrastructure/terraform/modules/**"
+      - "platform/infrastructure/terraform/policies/**"
+      - ".github/workflows/terraform-ci.yaml"
+  pull_request:
+    branches:
+      - develop
+    paths:
+      - "platform/infrastructure/terraform/environments/dev/**"
+      - "platform/infrastructure/terraform/modules/**"
+      - "platform/infrastructure/terraform/policies/**"
+      - ".github/workflows/terraform-ci.yaml"
+  workflow_dispatch:
+    inputs:
+      scan_type:
+        description: "Chọn loại scan muốn chạy"
+        required: true
+        default: "all"
+        type: choice
+        options:
+          - all
+          - validate
+          - tflint
+          - tfsec
+          - checkov
+
+env:
+  TF_VERSION: "1.10.0"
+  TF_WORKING_DIR: "platform/infrastructure/terraform/environments/dev"
+  # Feature branch → soft_fail = true, không block CI
+  SOFT_FAIL: ${{ startsWith(github.ref, 'refs/heads/feature/') }}
+
+# =============================================================================
+# JOB 1: Terraform fmt / init / validate
+# =============================================================================
+jobs:
+  validate:
+    name: Validate and Format
+    runs-on: ubuntu-latest
+    if: |
+      github.event_name != 'workflow_dispatch' ||
+      github.event.inputs.scan_type == 'all' ||
+      github.event.inputs.scan_type == 'validate'
+    defaults:
+      run:
+        shell: bash
+        working-directory: ${{ env.TF_WORKING_DIR }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+
+      - name: Terraform fmt check
+        id: fmt
+        run: terraform fmt -check -recursive -diff
+        continue-on-error: false
+
+      - name: Terraform init (no backend)
+        id: init
+        run: terraform init -backend=false -input=false
+
+      - name: Terraform validate
+        id: validate
+        run: terraform validate -no-color
+
+      - name: Comment PR — Validate Results
+        if: github.event_name == 'pull_request' && always()
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fmt      = '${{ steps.fmt.outcome }}';
+            const init     = '${{ steps.init.outcome }}';
+            const validate = '${{ steps.validate.outcome }}';
+            const icon     = s => s === 'success' ? '✅' : '❌';
+            const allPass  = [fmt, init, validate].every(s => s === 'success');
+
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: [
+                `## Terraform Validate [DEV] — ${allPass ? '✅ ALL PASSED' : '❌ FAILED'}`,
+                '',
+                '| Step | Result |',
+                '|------|--------|',
+                `| fmt      | ${icon(fmt)} \`${fmt}\` |`,
+                `| init     | ${icon(init)} \`${init}\` |`,
+                `| validate | ${icon(validate)} \`${validate}\` |`,
+                '',
+                `Commit: \`${{ github.sha }}\` | Branch: \`${{ github.head_ref }}\``
+              ].join('\n')
+            });
+
+# =============================================================================
+# JOB 2: TFLint — AWS best practices + naming + required providers
+# =============================================================================
+  tflint:
+    name: TFLint Analysis
+    runs-on: ubuntu-latest
+    needs: validate
+    if: |
+      github.event_name != 'workflow_dispatch' ||
+      github.event.inputs.scan_type == 'all' ||
+      github.event.inputs.scan_type == 'tflint'
+    permissions:
+      contents: read
+      pull-requests: write
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup TFLint
+        uses: terraform-linters/setup-tflint@v4
+        with:
+          tflint_version: latest
+
+      - name: Write TFLint config
+        working-directory: ${{ env.TF_WORKING_DIR }}
+        run: |
+          cat > .tflint.hcl << 'EOF'
+          plugin "aws" {
+            enabled = true
+            version = "0.30.0"
+            source  = "github.com/terraform-linters/tflint-ruleset-aws"
+          }
+          rule "terraform_naming_convention"    { enabled = true }
+          rule "terraform_required_providers"   { enabled = true }
+          rule "terraform_required_version"     { enabled = true }
+          rule "terraform_unused_declarations"  { enabled = true }
+          rule "terraform_documented_variables" { enabled = true }
+          rule "terraform_documented_outputs"   { enabled = true }
+          EOF
+
+      - name: TFLint init
+        working-directory: ${{ env.TF_WORKING_DIR }}
+        run: tflint --init
+
+      - name: Run TFLint
+        working-directory: ${{ env.TF_WORKING_DIR }}
+        run: |
+          tflint --format json --recursive \
+            > ${{ runner.temp }}/tflint-report.json || true
+          # Human-readable summary in logs
+          tflint --format compact --recursive || true
+
+      - name: Upload TFLint report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: tflint-report
+          path: ${{ runner.temp }}/tflint-report.json
+          retention-days: 7
+
+      - name: Comment PR — TFLint Results
+        if: github.event_name == 'pull_request'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs   = require('fs');
+            const raw  = fs.readFileSync('${{ runner.temp }}/tflint-report.json', 'utf8');
+            const data = JSON.parse(raw);
+            const issues = data.issues || [];
+            const icon = s => s === 'error' ? '❌' : s === 'warning' ? '⚠️' : 'ℹ️';
+
+            let body = `## TFLint Analysis [DEV]\n\n`;
+            if (issues.length === 0) {
+              body += '✅ No linting issues found.';
+            } else {
+              body += `Found **${issues.length}** issue(s)\n\n`;
+              issues.slice(0, 10).forEach((issue, i) => {
+                body += `${i+1}. ${icon(issue.rule.severity)} **${issue.rule.name}** \`${issue.rule.severity}\`\n`;
+                body += `   \`${issue.range.filename}:${issue.range.start.line}\` — ${issue.message}\n\n`;
+              });
+              if (issues.length > 10) {
+                body += `_...and ${issues.length - 10} more — see artifact: tflint-report_`;
+              }
+            }
+
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body
+            });
+
+# =============================================================================
+# JOB 3: tfsec — IaC security scanning
+# =============================================================================
+  tfsec:
+    name: tfsec Security Scan
+    runs-on: ubuntu-latest
+    needs: validate
+    if: |
+      github.event_name != 'workflow_dispatch' ||
+      github.event.inputs.scan_type == 'all' ||
+      github.event.inputs.scan_type == 'tfsec'
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Run tfsec
+        uses: aquasecurity/tfsec-action@v1.0.0
+        with:
+          working_directory: ${{ env.TF_WORKING_DIR }}
+          format: lovely
+          soft_fail: ${{ env.SOFT_FAIL }}
+          additional_args: "--exclude-downloaded-modules --no-color"
+
+      - name: Run tfsec (JSON for artifact)
+        if: always()
+        run: |
+          docker run --rm \
+            -v "${{ github.workspace }}:/src" \
+            aquasec/tfsec /src/${{ env.TF_WORKING_DIR }} \
+            --format json \
+            --no-color \
+            --exclude-downloaded-modules \
+            > ${{ runner.temp }}/tfsec-report.json || true
+
+      - name: Upload tfsec report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: tfsec-report
+          path: ${{ runner.temp }}/tfsec-report.json
+          retention-days: 7
+
+# =============================================================================
+# JOB 4: Checkov — CIS compliance + security misconfiguration
+# SARIF được upload lên GitHub Security tab.
+# =============================================================================
+  checkov:
+    name: Checkov Compliance Scan
+    runs-on: ubuntu-latest
+    needs: validate
+    if: |
+      github.event_name != 'workflow_dispatch' ||
+      github.event.inputs.scan_type == 'all' ||
+      github.event.inputs.scan_type == 'checkov'
+    permissions:
+      contents: read
+      security-events: write
+      pull-requests: write
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Create reports directory
+        run: mkdir -p reports
+
+      - name: Run Checkov
+        id: checkov
+        uses: bridgecrewio/checkov-action@master
+        with:
+          directory: ${{ env.TF_WORKING_DIR }}
+          framework: terraform
+          output_format: sarif
+          output_file_path: reports/checkov.sarif
+          soft_fail: ${{ env.SOFT_FAIL }}
+          quiet: false
+          # Bỏ qua một số check không liên quan đến EKS dev environment
+          skip_check: >
+            CKV_AWS_8,
+            CKV2_AWS_12
+
+      - name: Upload SARIF to GitHub Security tab
+        if: always()
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: reports/checkov.sarif
+          category: Checkov-Terraform-DEV
+
+      - name: Upload Checkov report artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: checkov-report
+          path: reports/checkov.sarif
+          retention-days: 7
+
+      - name: Comment PR — Checkov Results
+        if: github.event_name == 'pull_request'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs      = require('fs');
+            const sarif   = JSON.parse(fs.readFileSync('./reports/checkov.sarif', 'utf8'));
+            const issues  = sarif.runs[0].results || [];
+            const critical = issues.filter(r => r.properties?.severity === 'HIGH' || r.properties?.severity === 'CRITICAL');
+
+            let body = `## Checkov Compliance Scan [DEV]\n\n`;
+            body += `**Total issues:** ${issues.length} | **HIGH/CRITICAL:** ${critical.length}\n\n`;
+
+            if (issues.length === 0) {
+              body += '✅ No security issues found.';
+            } else {
+              body += '| Check | Severity | File |\n|-------|----------|------|\n';
+              issues.slice(0, 8).forEach(r => {
+                const loc = r.locations?.[0]?.physicalLocation?.artifactLocation?.uri || '-';
+                body += `| \`${r.ruleId}\` | ${r.properties?.severity || '-'} | \`${loc}\` |\n`;
+              });
+              if (issues.length > 8) {
+                body += `\n_...and ${issues.length - 8} more — see GitHub Security tab or artifact: checkov-report_`;
+              }
+            }
+
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body
+            });
+
+# =============================================================================
+# JOB 5: CI Summary — tổng hợp kết quả, comment PR, notify Slack
+# =============================================================================
+  ci-summary:
+    name: CI Summary
+    runs-on: ubuntu-latest
+    needs: [validate, tflint, tfsec, checkov]
+    if: always()
+    permissions:
+      pull-requests: write
+
+    steps:
+      - name: Download all reports
+        uses: actions/download-artifact@v4
+        with:
+          path: reports/
+          merge-multiple: true
+
+      - name: Write GitHub Step Summary
+        run: |
+          {
+            echo "## Terraform CI Summary — DEV"
+            echo ""
+            echo "| Job | Result |"
+            echo "|-----|--------|"
+            echo "| Validate | ${{ needs.validate.result }} |"
+            echo "| TFLint   | ${{ needs.tflint.result }} |"
+            echo "| tfsec    | ${{ needs.tfsec.result }} |"
+            echo "| Checkov  | ${{ needs.checkov.result }} |"
+            echo ""
+            echo "Branch: \`${{ github.ref_name }}\` | Commit: \`${{ github.sha }}\`"
+          } >> $GITHUB_STEP_SUMMARY
+
+      - name: Comment PR — CI Summary
+        if: github.event_name == 'pull_request'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const icon = s => s === 'success' ? '✅' : s === 'failure' ? '❌' : s === 'skipped' ? '⏭️' : '⚠️';
+            const jobs = {
+              validate: '${{ needs.validate.result }}',
+              tflint:   '${{ needs.tflint.result }}',
+              tfsec:    '${{ needs.tfsec.result }}',
+              checkov:  '${{ needs.checkov.result }}'
+            };
+            const allPass = Object.values(jobs).every(v => v === 'success' || v === 'skipped');
+
+            let body = `## Terraform CI [DEV] — ${allPass ? '✅ ALL PASSED' : '❌ ACTION REQUIRED'}\n\n`;
+            body += '| Job | Result |\n|-----|--------|\n';
+            for (const [job, result] of Object.entries(jobs)) {
+              body += `| ${job.padEnd(8)} | ${icon(result)} \`${result}\` |\n`;
+            }
+
+            if (fs.existsSync('./reports/tflint-report.json')) {
+              const d = JSON.parse(fs.readFileSync('./reports/tflint-report.json', 'utf8'));
+              body += `\n**TFLint issues:** ${(d.issues || []).length}`;
+            }
+            if (fs.existsSync('./reports/checkov.sarif')) {
+              const d = JSON.parse(fs.readFileSync('./reports/checkov.sarif', 'utf8'));
+              body += ` | **Checkov issues:** ${(d.runs[0].results || []).length}`;
+            }
+
+            body += `\n\nCommit: \`${{ github.sha }}\` | Branch: \`${{ github.head_ref }}\``;
+
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body
+            });
+
+      - name: Notify Slack
+        if: always()
+        uses: rtCamp/action-slack-notify@v2
+        env:
+          SLACK_WEBHOOK: ${{ secrets.SLACK_WEBHOOK_URL }}
+          SLACK_COLOR: >-
+            ${{
+              (needs.validate.result == 'success' &&
+               needs.tflint.result  == 'success' &&
+               needs.checkov.result == 'success')
+              && 'good' || 'danger'
+            }}
+          SLACK_TITLE: "Terraform CI — DEV"
+          SLACK_MESSAGE: |
+            Branch   : ${{ github.ref_name }}
+            Commit   : ${{ github.sha }}
+            Actor    : ${{ github.actor }}
+            Validate : ${{ needs.validate.result }}
+            TFLint   : ${{ needs.tflint.result }}
+            tfsec    : ${{ needs.tfsec.result }}
+            Checkov  : ${{ needs.checkov.result }}
+          SLACK_FOOTER: "EKS DevSecOps Platform | Terraform CI"

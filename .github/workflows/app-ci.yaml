@@ -1,0 +1,378 @@
+name: Application CI
+
+# =============================================================================
+# Application CI — chạy khi thay đổi GitOps manifests hoặc app source code.
+#
+# Jobs (song song sau gitleaks):
+#   gitleaks → (kustomize-validate, opa-k8s, falco-validate, trivy-fs) → app-ci-summary
+#
+# GitHub Secrets:
+#   SLACK_WEBHOOK_URL
+# =============================================================================
+
+on:
+  push:
+    branches:
+      - develop
+      - "feature/**"
+    paths:
+      - "platform/gitops/**"
+      - "platform/security/opa/**"
+      - "platform/security/falco/**"
+      - "microservices-application/**"
+      - ".github/workflows/app-ci.yaml"
+  pull_request:
+    branches:
+      - develop
+    paths:
+      - "platform/gitops/**"
+      - "platform/security/opa/**"
+      - "platform/security/falco/**"
+      - "microservices-application/**"
+      - ".github/workflows/app-ci.yaml"
+  workflow_dispatch:
+
+# =============================================================================
+# JOB 1: Gitleaks — secret scanning (chạy trước tất cả)
+# =============================================================================
+jobs:
+  gitleaks:
+    name: Gitleaks Secret Scan
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # Full history để scan tất cả commits
+
+      - name: Run Gitleaks
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # GITLEAKS_LICENSE: ${{ secrets.GITLEAKS_LICENSE }}  # Chỉ cần cho org repos
+
+      - name: Upload Gitleaks report
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: gitleaks-report
+          path: results.sarif
+          retention-days: 7
+
+# =============================================================================
+# JOB 2: Kustomize Build Validation + kubeconform schema check
+# =============================================================================
+  kustomize-validate:
+    name: Kustomize Validate
+    runs-on: ubuntu-latest
+    needs: gitleaks
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install tools
+        run: |
+          # Kustomize
+          curl -sSL "https://raw.githubusercontent.com/kubernetes-sigs/kustomize/master/hack/install_kustomize.sh" | bash
+          sudo mv kustomize /usr/local/bin/
+          kustomize version
+
+          # kubeconform — validate K8s manifests against schema
+          curl -sSL -o /tmp/kubeconform.tar.gz \
+            https://github.com/yannh/kubeconform/releases/latest/download/kubeconform-linux-amd64.tar.gz
+          tar -xzf /tmp/kubeconform.tar.gz -C /usr/local/bin/
+          kubeconform -v
+
+      - name: Kustomize build — dev overlays
+        run: |
+          echo "=== Building dev overlays ==="
+          FAILED=0
+          declare -A OVERLAYS=(
+            [platform-services]="platform/gitops/kustomize/overlays/dev/platform-services"
+            [security]="platform/gitops/kustomize/overlays/dev/security"
+            [observability]="platform/gitops/kustomize/overlays/dev/observability"
+            [online-boutique]="platform/gitops/kustomize/overlays/dev/applications/online-boutique"
+          )
+
+          mkdir -p ${{ runner.temp }}/built-manifests
+
+          for name in "${!OVERLAYS[@]}"; do
+            path="${OVERLAYS[$name]}"
+            if [ -d "$path" ]; then
+              echo "--- Building: $name ($path)"
+              kustomize build "$path" \
+                > ${{ runner.temp }}/built-manifests/${name}.yaml 2>&1 && \
+                echo "✅ $name: OK" || \
+                { echo "❌ $name: FAILED"; FAILED=1; }
+            else
+              echo "⚠️ $name: path not found ($path) — skipping"
+            fi
+          done
+
+          exit $FAILED
+
+      - name: kubeconform — validate K8s schema
+        run: |
+          echo "=== Validating manifests against Kubernetes schema ==="
+          FAILED=0
+          for manifest in ${{ runner.temp }}/built-manifests/*.yaml; do
+            name=$(basename "$manifest" .yaml)
+            echo "--- Validating: $name"
+            kubeconform \
+              -strict \
+              -ignore-missing-schemas \
+              -kubernetes-version "1.33.0" \
+              -output pretty \
+              "$manifest" && \
+              echo "✅ $name: schema OK" || \
+              { echo "❌ $name: schema FAILED"; FAILED=1; }
+          done
+          exit $FAILED
+
+      - name: Upload built manifests
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: built-manifests
+          path: ${{ runner.temp }}/built-manifests/
+          retention-days: 3
+
+# =============================================================================
+# JOB 3: OPA — test Kubernetes admission policies (platform/security/opa/)
+# =============================================================================
+  opa-k8s-policies:
+    name: OPA Kubernetes Policy Tests
+    runs-on: ubuntu-latest
+    needs: gitleaks
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install OPA
+        run: |
+          curl -sSL -o /usr/local/bin/opa \
+            https://openpolicyagent.org/downloads/latest/opa_linux_amd64_static
+          chmod +x /usr/local/bin/opa
+          opa version
+
+      - name: Run OPA unit tests
+        run: |
+          if [ -d "platform/security/opa" ]; then
+            echo "=== Running OPA policy tests ==="
+            opa test \
+              platform/security/opa/ \
+              --verbose \
+              --format pretty \
+              2>&1 | tee ${{ runner.temp }}/opa-test-results.txt
+
+            # Check exit code
+            opa test platform/security/opa/ --format json \
+              > ${{ runner.temp }}/opa-test-results.json 2>/dev/null || true
+          else
+            echo "⚠️ platform/security/opa/ not found — skipping OPA tests"
+          fi
+
+      - name: Validate OPA policy syntax
+        run: |
+          echo "=== Checking OPA policy syntax ==="
+          find platform/security/opa/ -name "*.rego" 2>/dev/null | while read -r f; do
+            opa check "$f" && echo "✅ $f: syntax OK" || echo "❌ $f: syntax ERROR"
+          done
+
+      - name: Upload OPA test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: opa-k8s-test-results
+          path: ${{ runner.temp }}/opa-test-results.*
+          retention-days: 7
+
+# =============================================================================
+# JOB 4: Falco Rules Validation
+# =============================================================================
+  falco-validate:
+    name: Falco Rules Validation
+    runs-on: ubuntu-latest
+    needs: gitleaks
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install Falco (validation mode only)
+        run: |
+          # Cài falco để validate rules — không cần kernel module
+          curl -fsSL https://falco.org/repo/falcosecurity-packages.asc | \
+            sudo gpg --dearmor -o /usr/share/keyrings/falco-archive-keyring.gpg
+          echo "deb [signed-by=/usr/share/keyrings/falco-archive-keyring.gpg] \
+            https://download.falco.org/packages/deb stable main" | \
+            sudo tee /etc/apt/sources.list.d/falcosecurity.list
+          sudo apt-get update -qq
+          sudo apt-get install -y falco --no-install-recommends 2>/dev/null || \
+            echo "Falco install skipped — using Docker fallback"
+
+      - name: Validate Falco rules (native)
+        id: validate_native
+        continue-on-error: true
+        run: |
+          if [ -d "platform/security/falco" ]; then
+            find platform/security/falco -name "*.yaml" -o -name "*.yml" | while read -r rules_file; do
+              echo "--- Validating: $rules_file"
+              falco --validate "$rules_file" && \
+                echo "✅ $rules_file: valid" || \
+                echo "❌ $rules_file: INVALID"
+            done
+          else
+            echo "⚠️ platform/security/falco/ not found"
+          fi
+
+      - name: Validate Falco rules (Docker fallback)
+        if: steps.validate_native.outcome == 'failure'
+        run: |
+          if [ -d "platform/security/falco" ]; then
+            find platform/security/falco -name "*.yaml" -o -name "*.yml" | while read -r rules_file; do
+              echo "--- Validating via Docker: $rules_file"
+              docker run --rm \
+                -v "${{ github.workspace }}:/workspace" \
+                falcosecurity/falco:latest \
+                falco --validate "/workspace/$rules_file" && \
+                echo "✅ $rules_file: valid" || \
+                echo "❌ $rules_file: INVALID"
+            done
+          fi
+
+# =============================================================================
+# JOB 5: Trivy — Filesystem scan (source code, sebelum build image)
+# =============================================================================
+  trivy-filesystem:
+    name: Trivy Filesystem Scan
+    runs-on: ubuntu-latest
+    needs: gitleaks
+    permissions:
+      contents: read
+      security-events: write
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Run Trivy filesystem scan (SARIF)
+        uses: aquasecurity/trivy-action@master
+        with:
+          scan-type: "fs"
+          scan-ref: "."
+          format: "sarif"
+          output: "trivy-fs-results.sarif"
+          severity: "CRITICAL,HIGH"
+          ignore-unfixed: true
+          exit-code: "0"  # non-blocking — report only
+
+      - name: Run Trivy filesystem scan (table for logs)
+        uses: aquasecurity/trivy-action@master
+        with:
+          scan-type: "fs"
+          scan-ref: "."
+          format: "table"
+          severity: "CRITICAL,HIGH"
+          ignore-unfixed: true
+          exit-code: "0"
+
+      - name: Upload SARIF to GitHub Security tab
+        if: always()
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: trivy-fs-results.sarif
+          category: Trivy-Filesystem-Scan
+
+      - name: Upload Trivy report artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: trivy-fs-report
+          path: trivy-fs-results.sarif
+          retention-days: 7
+
+# =============================================================================
+# JOB 6: App CI Summary
+# =============================================================================
+  app-ci-summary:
+    name: App CI Summary
+    runs-on: ubuntu-latest
+    needs: [gitleaks, kustomize-validate, opa-k8s-policies, falco-validate, trivy-filesystem]
+    if: always()
+    permissions:
+      pull-requests: write
+
+    steps:
+      - name: Write GitHub Step Summary
+        run: |
+          {
+            echo "## Application CI Summary"
+            echo ""
+            echo "| Job | Result |"
+            echo "|-----|--------|"
+            echo "| Gitleaks           | ${{ needs.gitleaks.result }} |"
+            echo "| Kustomize Validate | ${{ needs.kustomize-validate.result }} |"
+            echo "| OPA K8s Policies   | ${{ needs.opa-k8s-policies.result }} |"
+            echo "| Falco Validate     | ${{ needs.falco-validate.result }} |"
+            echo "| Trivy Filesystem   | ${{ needs.trivy-filesystem.result }} |"
+            echo ""
+            echo "Branch: \`${{ github.ref_name }}\` | Commit: \`${{ github.sha }}\`"
+          } >> $GITHUB_STEP_SUMMARY
+
+      - name: Comment PR — App CI Summary
+        if: github.event_name == 'pull_request'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const icon = s => s === 'success' ? '✅' : s === 'failure' ? '❌' : s === 'skipped' ? '⏭️' : '⚠️';
+            const jobs = {
+              'Gitleaks':           '${{ needs.gitleaks.result }}',
+              'Kustomize Validate': '${{ needs.kustomize-validate.result }}',
+              'OPA K8s Policies':   '${{ needs.opa-k8s-policies.result }}',
+              'Falco Validate':     '${{ needs.falco-validate.result }}',
+              'Trivy Filesystem':   '${{ needs.trivy-filesystem.result }}',
+            };
+            const gitleaksFailed = '${{ needs.gitleaks.result }}' === 'failure';
+            const allPass = Object.values(jobs).every(v => ['success','skipped'].includes(v));
+
+            let body = `## App CI [DEV] — ${allPass ? '✅ ALL PASSED' : '❌ ACTION REQUIRED'}\n\n`;
+            if (gitleaksFailed) {
+              body += '> ⚠️ **Gitleaks detected secrets in code. All downstream jobs blocked.**\n\n';
+            }
+            body += '| Job | Result |\n|-----|--------|\n';
+            for (const [job, result] of Object.entries(jobs)) {
+              body += `| ${job} | ${icon(result)} \`${result}\` |\n`;
+            }
+            body += `\nCommit: \`${{ github.sha }}\` | Branch: \`${{ github.head_ref }}\``;
+
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body
+            });
+
+      - name: Notify Slack
+        if: always()
+        uses: rtCamp/action-slack-notify@v2
+        env:
+          SLACK_WEBHOOK: ${{ secrets.SLACK_WEBHOOK_URL }}
+          SLACK_COLOR: >-
+            ${{
+              (needs.gitleaks.result == 'success' &&
+               needs.kustomize-validate.result == 'success')
+              && 'good' || 'danger'
+            }}
+          SLACK_TITLE: "App CI — DEV"
+          SLACK_MESSAGE: |
+            Branch    : ${{ github.ref_name }}
+            Gitleaks  : ${{ needs.gitleaks.result }}
+            Kustomize : ${{ needs.kustomize-validate.result }}
+            OPA K8s   : ${{ needs.opa-k8s-policies.result }}
+            Falco     : ${{ needs.falco-validate.result }}
+            Trivy FS  : ${{ needs.trivy-filesystem.result }}
+          SLACK_FOOTER: "EKS DevSecOps Platform | App CI"

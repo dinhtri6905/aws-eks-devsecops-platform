@@ -1,0 +1,372 @@
+name: Security and Compliance Scan
+
+# =============================================================================
+# Quét bảo mật định kỳ hàng ngày + có thể trigger thủ công.
+# Khác terraform-ci (chỉ validate/lint) — file này:
+#   - Gen plan JSON mới nhất từ remote state
+#   - Chạy OPA trên 3 policy files (security/networking/compliance)
+#   - Chạy tfsec deep scan
+#   - Ghi Step Summary + notify Slack
+#
+# GitHub Secrets:
+#   AWS_DEV_ROLE_ARN, BUCKET_TF_STATE
+#   TF_VAR_DB_PASSWORD, GITOPS_REPO_URL
+#   SLACK_WEBHOOK_URL
+# =============================================================================
+
+on:
+  schedule:
+    # Hàng ngày 2:00 AM GMT+7 = 19:00 UTC hôm trước
+    - cron: "0 19 * * *"
+  workflow_dispatch:
+    inputs:
+      scan_type:
+        description: "Loại scan cần chạy"
+        required: true
+        default: "all"
+        type: choice
+        options:
+          - all
+          - opa-only
+          - tfsec-only
+
+env:
+  TF_VERSION: "1.10.0"
+  TF_WORKING_DIR: "platform/infrastructure/terraform/environments/dev"
+  POLICIES_DIR: "platform/infrastructure/terraform/policies"
+  AWS_REGION: "ap-southeast-1"
+
+# =============================================================================
+# JOB 1: OPA Full Scan — gen plan JSON, chạy tất cả policies
+# =============================================================================
+jobs:
+  opa-full-scan:
+    name: OPA Full Policy Scan
+    runs-on: ubuntu-latest
+    if: |
+      github.event_name == 'schedule' ||
+      github.event.inputs.scan_type == 'all' ||
+      github.event.inputs.scan_type == 'opa-only'
+    permissions:
+      contents: read
+      id-token: write
+
+    defaults:
+      run:
+        shell: bash
+        working-directory: ${{ env.TF_WORKING_DIR }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials via OIDC
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_DEV_ROLE_ARN }}
+          role-session-name: check-scan-opa-${{ github.run_id }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+          terraform_wrapper: false
+
+      - name: Terraform init
+        run: |
+          terraform init \
+            -backend-config="bucket=${{ secrets.BUCKET_TF_STATE }}" \
+            -backend-config="region=${{ env.AWS_REGION }}" \
+            -input=false \
+            -no-color
+
+      - name: Generate Terraform plan
+        run: |
+          terraform plan \
+            -out=tfplan \
+            -input=false \
+            -no-color
+        env:
+          TF_VAR_db_password: ${{ secrets.TF_VAR_DB_PASSWORD }}
+          TF_VAR_gitops_repo_url: ${{ secrets.GITOPS_REPO_URL }}
+
+      - name: Export plan to JSON
+        run: |
+          terraform show -json tfplan > ${{ runner.temp }}/tf-plan.json
+          jq -e . ${{ runner.temp }}/tf-plan.json > /dev/null
+          echo "Plan JSON exported. Resources: $(jq '.resource_changes | length' ${{ runner.temp }}/tf-plan.json)"
+
+      - name: Install OPA
+        run: |
+          curl -sSL -o /usr/local/bin/opa \
+            https://openpolicyagent.org/downloads/latest/opa_linux_amd64_static
+          chmod +x /usr/local/bin/opa
+          opa version
+
+      # ── Security ────────────────────────────────────────────────────────
+      - name: OPA — Security DENY
+        id: sec_deny
+        working-directory: ${{ github.workspace }}
+        run: |
+          RESULT=$(opa eval --format json \
+            --data ${{ env.POLICIES_DIR }}/security.rego \
+            --input ${{ runner.temp }}/tf-plan.json \
+            "data.terraform.security.deny")
+          COUNT=$(echo "$RESULT" | jq '.result[0].expressions[0].value | length')
+          echo "count=$COUNT" >> $GITHUB_OUTPUT
+          echo "$RESULT" | jq -r '.result[0].expressions[0].value[]' \
+            > ${{ runner.temp }}/sec-deny.txt 2>/dev/null || true
+          cat ${{ runner.temp }}/sec-deny.txt | sed 's/^/  [DENY][security] /'
+
+      - name: OPA — Security WARN
+        id: sec_warn
+        working-directory: ${{ github.workspace }}
+        run: |
+          RESULT=$(opa eval --format json \
+            --data ${{ env.POLICIES_DIR }}/security.rego \
+            --input ${{ runner.temp }}/tf-plan.json \
+            "data.terraform.security.warn" 2>/dev/null \
+            || echo '{"result":[{"expressions":[{"value":[]}]}]}')
+          COUNT=$(echo "$RESULT" | jq '.result[0].expressions[0].value | length' || echo 0)
+          echo "count=$COUNT" >> $GITHUB_OUTPUT
+          echo "$RESULT" | jq -r '.result[0].expressions[0].value[]' \
+            > ${{ runner.temp }}/sec-warn.txt 2>/dev/null || true
+          cat ${{ runner.temp }}/sec-warn.txt | sed 's/^/  [WARN][security] /'
+
+      # ── Networking ──────────────────────────────────────────────────────
+      - name: OPA — Networking DENY
+        id: net_deny
+        working-directory: ${{ github.workspace }}
+        run: |
+          RESULT=$(opa eval --format json \
+            --data ${{ env.POLICIES_DIR }}/networking.rego \
+            --input ${{ runner.temp }}/tf-plan.json \
+            "data.terraform.networking.deny")
+          COUNT=$(echo "$RESULT" | jq '.result[0].expressions[0].value | length')
+          echo "count=$COUNT" >> $GITHUB_OUTPUT
+          echo "$RESULT" | jq -r '.result[0].expressions[0].value[]' \
+            > ${{ runner.temp }}/net-deny.txt 2>/dev/null || true
+          cat ${{ runner.temp }}/net-deny.txt | sed 's/^/  [DENY][networking] /'
+
+      - name: OPA — Networking WARN
+        id: net_warn
+        working-directory: ${{ github.workspace }}
+        run: |
+          RESULT=$(opa eval --format json \
+            --data ${{ env.POLICIES_DIR }}/networking.rego \
+            --input ${{ runner.temp }}/tf-plan.json \
+            "data.terraform.networking.warn" 2>/dev/null \
+            || echo '{"result":[{"expressions":[{"value":[]}]}]}')
+          COUNT=$(echo "$RESULT" | jq '.result[0].expressions[0].value | length' || echo 0)
+          echo "count=$COUNT" >> $GITHUB_OUTPUT
+          echo "$RESULT" | jq -r '.result[0].expressions[0].value[]' \
+            > ${{ runner.temp }}/net-warn.txt 2>/dev/null || true
+          cat ${{ runner.temp }}/net-warn.txt | sed 's/^/  [WARN][networking] /'
+
+      # ── Compliance ──────────────────────────────────────────────────────
+      - name: OPA — Compliance DENY (Tagging + Encryption + EKS Logging)
+        id: cmp_deny
+        working-directory: ${{ github.workspace }}
+        run: |
+          RESULT=$(opa eval --format json \
+            --data ${{ env.POLICIES_DIR }}/compliance.rego \
+            --input ${{ runner.temp }}/tf-plan.json \
+            "data.terraform.compliance.deny")
+          COUNT=$(echo "$RESULT" | jq '.result[0].expressions[0].value | length')
+          echo "count=$COUNT" >> $GITHUB_OUTPUT
+          echo "$RESULT" | jq -r '.result[0].expressions[0].value[]' \
+            > ${{ runner.temp }}/cmp-deny.txt 2>/dev/null || true
+          cat ${{ runner.temp }}/cmp-deny.txt | sed 's/^/  [DENY][compliance] /'
+
+      - name: OPA — Compliance WARN
+        id: cmp_warn
+        working-directory: ${{ github.workspace }}
+        run: |
+          RESULT=$(opa eval --format json \
+            --data ${{ env.POLICIES_DIR }}/compliance.rego \
+            --input ${{ runner.temp }}/tf-plan.json \
+            "data.terraform.compliance.warn" 2>/dev/null \
+            || echo '{"result":[{"expressions":[{"value":[]}]}]}')
+          COUNT=$(echo "$RESULT" | jq '.result[0].expressions[0].value | length' || echo 0)
+          echo "count=$COUNT" >> $GITHUB_OUTPUT
+          echo "$RESULT" | jq -r '.result[0].expressions[0].value[]' \
+            > ${{ runner.temp }}/cmp-warn.txt 2>/dev/null || true
+          cat ${{ runner.temp }}/cmp-warn.txt | sed 's/^/  [WARN][compliance] /'
+
+      - name: Build OPA report JSON
+        run: |
+          jq -n \
+            --argjson sec_deny "$(jq -R . < ${{ runner.temp }}/sec-deny.txt | jq -s . 2>/dev/null || echo '[]')" \
+            --argjson sec_warn "$(jq -R . < ${{ runner.temp }}/sec-warn.txt | jq -s . 2>/dev/null || echo '[]')" \
+            --argjson net_deny "$(jq -R . < ${{ runner.temp }}/net-deny.txt | jq -s . 2>/dev/null || echo '[]')" \
+            --argjson net_warn "$(jq -R . < ${{ runner.temp }}/net-warn.txt | jq -s . 2>/dev/null || echo '[]')" \
+            --argjson cmp_deny "$(jq -R . < ${{ runner.temp }}/cmp-deny.txt | jq -s . 2>/dev/null || echo '[]')" \
+            --argjson cmp_warn "$(jq -R . < ${{ runner.temp }}/cmp-warn.txt | jq -s . 2>/dev/null || echo '[]')" \
+            '{
+              generated_at: now | todate,
+              security:   { deny: $sec_deny,  warn: $sec_warn },
+              networking: { deny: $net_deny,  warn: $net_warn },
+              compliance: { deny: $cmp_deny,  warn: $cmp_warn }
+            }' > ${{ runner.temp }}/opa-results.json
+          echo "OPA report built."
+
+      - name: Upload OPA report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: opa-full-report
+          path: ${{ runner.temp }}/opa-results.json
+          retention-days: 30
+
+      - name: Fail if DENY violations found
+        run: |
+          SEC="${{ steps.sec_deny.outputs.count }}"
+          NET="${{ steps.net_deny.outputs.count }}"
+          CMP="${{ steps.cmp_deny.outputs.count }}"
+          TOTAL=$(( ${SEC:-0} + ${NET:-0} + ${CMP:-0} ))
+          echo "Total DENY violations: $TOTAL (security=$SEC networking=$NET compliance=$CMP)"
+          if [ "$TOTAL" -gt 0 ]; then
+            echo "❌ OPA scan FAILED: $TOTAL blocking violation(s) found."
+            exit 1
+          fi
+          echo "✅ OPA scan PASSED."
+
+# =============================================================================
+# JOB 2: tfsec Deep Scan — tất cả rules, JSON output
+# =============================================================================
+  tfsec-deep:
+    name: tfsec Deep Scan
+    runs-on: ubuntu-latest
+    if: |
+      github.event_name == 'schedule' ||
+      github.event.inputs.scan_type == 'all' ||
+      github.event.inputs.scan_type == 'tfsec-only'
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install tfsec
+        run: |
+          curl -sSL -o /usr/local/bin/tfsec \
+            https://github.com/aquasecurity/tfsec/releases/latest/download/tfsec-linux-amd64
+          chmod +x /usr/local/bin/tfsec
+          tfsec --version
+
+      - name: Run tfsec (JSON output for report)
+        run: |
+          tfsec ${{ env.TF_WORKING_DIR }} \
+            --format json \
+            --no-color \
+            --exclude-downloaded-modules \
+            --out ${{ runner.temp }}/tfsec-report.json || true
+
+      - name: Run tfsec (human-readable log)
+        run: |
+          tfsec ${{ env.TF_WORKING_DIR }} \
+            --format lovely \
+            --no-color \
+            --exclude-downloaded-modules || true
+
+      - name: Summarize tfsec results
+        run: |
+          if [ -f ${{ runner.temp }}/tfsec-report.json ]; then
+            TOTAL=$(jq '.results | length' ${{ runner.temp }}/tfsec-report.json 2>/dev/null || echo 0)
+            CRITICAL=$(jq '[.results[] | select(.severity == "CRITICAL")] | length' ${{ runner.temp }}/tfsec-report.json 2>/dev/null || echo 0)
+            HIGH=$(jq '[.results[] | select(.severity == "HIGH")] | length' ${{ runner.temp }}/tfsec-report.json 2>/dev/null || echo 0)
+            echo "tfsec results: total=$TOTAL critical=$CRITICAL high=$HIGH"
+          fi
+
+      - name: Upload tfsec report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: tfsec-deep-report
+          path: ${{ runner.temp }}/tfsec-report.json
+          retention-days: 30
+
+# =============================================================================
+# JOB 3: Generate Reports + Notify Slack
+# =============================================================================
+  generate-reports:
+    name: Generate Reports
+    runs-on: ubuntu-latest
+    needs: [opa-full-scan, tfsec-deep]
+    if: always()
+
+    steps:
+      - name: Download all reports
+        uses: actions/download-artifact@v4
+        with:
+          path: reports/
+          merge-multiple: true
+
+      - name: Write GitHub Step Summary
+        run: |
+          {
+            echo "## Security and Compliance Scan — DEV"
+            echo ""
+            echo "Scan date: $(date -u '+%Y-%m-%d %H:%M UTC')"
+            echo ""
+            echo "### OPA Policy Results"
+            echo "| Policy | DENY | WARN |"
+            echo "|--------|------|------|"
+
+            if [ -f reports/opa-results.json ]; then
+              SEC_DENY=$(jq '.security.deny   | length' reports/opa-results.json)
+              SEC_WARN=$(jq '.security.warn   | length' reports/opa-results.json)
+              NET_DENY=$(jq '.networking.deny | length' reports/opa-results.json)
+              NET_WARN=$(jq '.networking.warn | length' reports/opa-results.json)
+              CMP_DENY=$(jq '.compliance.deny | length' reports/opa-results.json)
+              CMP_WARN=$(jq '.compliance.warn | length' reports/opa-results.json)
+              SEC_ICON=$([ "$SEC_DENY" -eq 0 ] && echo "✅" || echo "❌")
+              NET_ICON=$([ "$NET_DENY" -eq 0 ] && echo "✅" || echo "❌")
+              CMP_ICON=$([ "$CMP_DENY" -eq 0 ] && echo "✅" || echo "❌")
+              echo "| $SEC_ICON Security   | $SEC_DENY | $SEC_WARN |"
+              echo "| $NET_ICON Networking | $NET_DENY | $NET_WARN |"
+              echo "| $CMP_ICON Compliance | $CMP_DENY | $CMP_WARN |"
+            else
+              echo "| OPA report not found | - | - |"
+            fi
+
+            echo ""
+            echo "### tfsec Deep Scan"
+            if [ -f reports/tfsec-report.json ]; then
+              TFSEC_TOTAL=$(jq '.results | length' reports/tfsec-report.json 2>/dev/null || echo 0)
+              TFSEC_CRIT=$(jq '[.results[] | select(.severity=="CRITICAL")] | length' reports/tfsec-report.json 2>/dev/null || echo 0)
+              TFSEC_HIGH=$(jq '[.results[] | select(.severity=="HIGH")] | length' reports/tfsec-report.json 2>/dev/null || echo 0)
+              echo "| Severity | Count |"
+              echo "|----------|-------|"
+              echo "| CRITICAL | $TFSEC_CRIT |"
+              echo "| HIGH     | $TFSEC_HIGH |"
+              echo "| Total    | $TFSEC_TOTAL |"
+            else
+              echo "tfsec report not found."
+            fi
+
+            echo ""
+            echo "### Job Results"
+            echo "| Job | Result |"
+            echo "|-----|--------|"
+            echo "| OPA Full Scan | ${{ needs.opa-full-scan.result }} |"
+            echo "| tfsec Deep    | ${{ needs.tfsec-deep.result }} |"
+          } >> $GITHUB_STEP_SUMMARY
+
+      - name: Notify Slack
+        if: always()
+        uses: rtCamp/action-slack-notify@v2
+        env:
+          SLACK_WEBHOOK: ${{ secrets.SLACK_WEBHOOK_URL }}
+          SLACK_COLOR: >-
+            ${{
+              (needs.opa-full-scan.result == 'success' && needs.tfsec-deep.result == 'success')
+              && 'good' || 'danger'
+            }}
+          SLACK_TITLE: "Security Scan — DEV ${{ (needs.opa-full-scan.result == 'success' && needs.tfsec-deep.result == 'success') && '✅' || '❌' }}"
+          SLACK_MESSAGE: |
+            Run ID   : ${{ github.run_id }}
+            OPA Scan : ${{ needs.opa-full-scan.result }}
+            tfsec    : ${{ needs.tfsec-deep.result }}
+            Details  : ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          SLACK_FOOTER: "EKS DevSecOps Platform | Scheduled Security Scan"
