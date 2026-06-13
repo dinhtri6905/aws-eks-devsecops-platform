@@ -5,25 +5,29 @@ metadata:
   namespace: argocd
   finalizers:
     - resources-finalizer.argocd.argoproj.io
-  annotations:
-    argocd.argoproj.io/sync-wave: "-1"
 spec:
   project: platform
+
+  # The Root Application watches this directory, which contains
+  # the four child Application manifests (App-of-Apps pattern).
+  # ArgoCD will create/update/delete those Applications based on
+  # what is present here.
   source:
-    repoURL: https://github.com/YOUR_ORG/aws-eks-devsecops-platform
+    repoURL: https://github.com/dinhtri6905/aws-eks-devsecops-platform.git
     targetRevision: main
-    path: platform/gitops/applications
+    path: platform/gitops/argocd/applications
+
   destination:
     server: https://kubernetes.default.svc
     namespace: argocd
+
   syncPolicy:
     automated:
       prune: true
       selfHeal: true
     syncOptions:
       - CreateNamespace=true
-      - PrunePropagationPolicy=foreground
-      - PruneLast=true
+      - ApplyOutOfSyncOnly=true
     retry:
       limit: 5
       backoff:

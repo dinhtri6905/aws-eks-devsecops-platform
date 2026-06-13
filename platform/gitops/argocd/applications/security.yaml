@@ -5,15 +5,24 @@ metadata:
   namespace: argocd
   finalizers:
     - resources-finalizer.argocd.argoproj.io
+  labels:
+    platform-layer: security
   annotations:
-    # Deploy after platform-services — Gatekeeper webhooks must not block LBC install
+    # Deploy after platform-services (wave 1) — Gatekeeper webhooks must not block LBC install
     argocd.argoproj.io/sync-wave: "2"
+
 spec:
   project: platform
   source:
-    repoURL: https://github.com/YOUR_ORG/aws-eks-devsecops-platform
+    repoURL: https://github.com/dinhtri6905/aws-eks-devsecops-platform.git
     targetRevision: main
-    path: platform/gitops/kustomize/overlays/dev/security
+    path: platform/gitops/kustomize/security
+    # Deploys OPA Gatekeeper (with ConstraintTemplates/Constraints) and Falco (runtime threat detection)
+    kustomize:
+      components:
+        - opa-gatekeeper
+        - falco
+        
   destination:
     server: https://kubernetes.default.svc
     namespace: security
@@ -23,12 +32,13 @@ spec:
       selfHeal: true
     syncOptions:
       - CreateNamespace=true
+      - ApplyOutOfSyncOnly=true
       - ServerSideApply=true
       - RespectIgnoreDifferences=true
     retry:
       limit: 5
       backoff:
-        duration: 10s
+        duration: 5s
         factor: 2
         maxDuration: 3m
   # Ignore Gatekeeper webhook caBundle — injected at runtime, not managed by Git

@@ -5,15 +5,22 @@ metadata:
   namespace: argocd
   finalizers:
     - resources-finalizer.argocd.argoproj.io
+  labels:
+    platform-layer: applications
   annotations:
-    # Deploy last — platform + security + observability must be ready first
+    # Deploy last (wave 4) — platform + security + observability must be ready first
     argocd.argoproj.io/sync-wave: "4"
 spec:
   project: platform
+  # Deploys the Online Boutique microservices application.
+  # The dev overlay applies cost-saving patches (reduced
+  # replicas, dev-specific config) on top of the base
+  # application manifests.
   source:
-    repoURL: https://github.com/YOUR_ORG/aws-eks-devsecops-platform
+    repoURL: https://github.com/dinhtri6905/aws-eks-devsecops-platform.git
     targetRevision: main
-    path: platform/gitops/kustomize/overlays/dev/applications/online-boutique
+    # Đảm bảo đường dẫn này trỏ đúng vào thư mục kustomization.yaml của ứng dụng
+    path: platform/gitops/kustomize/overlays/dev
   destination:
     server: https://kubernetes.default.svc
     namespace: online-boutique
@@ -23,10 +30,11 @@ spec:
       selfHeal: true
     syncOptions:
       - CreateNamespace=true
+      - ApplyOutOfSyncOnly=true
       - PrunePropagationPolicy=foreground
     retry:
       limit: 5
       backoff:
-        duration: 10s
+        duration: 5s
         factor: 2
         maxDuration: 3m
