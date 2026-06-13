@@ -1,54 +1,139 @@
 # environments/dev
 
-Terraform configuration for the **dev** environment of the Cloud-Native Secure GitOps Platform on AWS EKS.
+Terraform configuration for the **dev** environment of the **Cloud-Native Secure GitOps Platform on AWS EKS**.
 
-This environment provisions all AWS infrastructure required to run the platform before any Kubernetes workloads are deployed.
+This environment provisions the complete AWS infrastructure required to run the platform — networking, security, EKS, container registry, database, and the IAM/IRSA foundations for the GitOps layer — before any Kubernetes workloads are deployed. Once Terraform completes, ArgoCD takes over and continuously synchronizes all platform services and applications from Git.
 
 ---
 
 ## Architecture Overview
 
-```
+```text
 ┌─────────────────────────────────────────────────────────────────┐
-│                        AWS ap-southeast-1                        │
-│                                                                  │
+│                       AWS ap-southeast-1                        │
+│                                                                 │
 │  ┌──────────────────────────────────────────────────────────┐   │
 │  │                   VPC  10.0.0.0/16                       │   │
 │  │                                                          │   │
-│  │  ┌─────────────────────┐  ┌─────────────────────────┐   │   │
-│  │  │  Public Subnet AZ-a │  │  Public Subnet AZ-b     │   │   │
-│  │  │  10.0.1.0/24        │  │  10.0.2.0/24            │   │   │
-│  │  │  [NAT Gateway]      │  │                         │   │   │
-│  │  └─────────────────────┘  └─────────────────────────┘   │   │
+│  │  ┌─────────────────────┐ ┌─────────────────────────┐     │   │
+│  │  │  Public Subnet AZ-a │ │  Public Subnet AZ-b     │     │   │
+│  │  │  10.0.1.0/24        │ │  10.0.2.0/24            │     │   │
+│  │  │  [NAT Gateway]      │ │                         │     │   │
+│  │  └─────────────────────┘ └─────────────────────────┘     │   │
 │  │                                                          │   │
-│  │  ┌─────────────────────┐  ┌─────────────────────────┐   │   │
-│  │  │  Private Subnet AZ-a│  │  Private Subnet AZ-b    │   │   │
-│  │  │  10.0.11.0/24       │  │  10.0.12.0/24           │   │   │
-│  │  │  [EKS Nodes]        │  │  [EKS Nodes] [RDS]      │   │   │
-│  │  └─────────────────────┘  └─────────────────────────┘   │   │
+│  │  ┌─────────────────────┐ ┌─────────────────────────┐     │   │
+│  │  │  Private Subnet AZ-a│ │  Private Subnet AZ-b    │     │   │
+│  │  │  10.0.11.0/24       │ │  10.0.12.0/24           │     │   │
+│  │  │  [EKS Nodes]        │ │  [EKS Nodes] [RDS]      │     │   │
+│  │  └─────────────────────┘ └─────────────────────────┘     │   │
 │  └──────────────────────────────────────────────────────────┘   │
-│                                                                  │
-│  [ECR Repositories]   [IAM Roles]   [OIDC Provider]             │
+│                                                                 │
+│ [ECR Repositories]   [IAM Roles + IRSA]   [OIDC Provider]       │
 └─────────────────────────────────────────────────────────────────┘
 ```
+
+### End-to-End Platform Flow
+
+```text
+Terraform (Infrastructure Provisioning)
+│
+├── VPC
+├── Security Groups
+├── IAM + IRSA
+├── EKS
+├── ECR
+├── RDS PostgreSQL
+└── ALB (IAM/IRSA for AWS Load Balancer Controller)
+└── ArgoCD Bootstrap
+       │
+       ▼
+ArgoCD Root Application (App of Apps)
+       │
+       ├── Platform Services
+       │      ├── Metrics Server
+       │      └── AWS Load Balancer Controller
+       │
+       ├── Security
+       │      ├── OPA Gatekeeper
+       │      └── Falco
+       │
+       ├── Observability
+       │      ├── Prometheus
+       │      └── Grafana
+       │
+       └── Applications
+              └── Online Boutique
+```
+
+> **Note on ArgoCD bootstrap:** ArgoCD installation and the Root Application bootstrap are handled outside this Terraform configuration (manually, via the `bootstrap-argocd` step in the GitHub Actions `terraform-apply` workflow, or via a separate `argocd-bootstrap` module/script). This `environments/dev` configuration provisions the **infrastructure only** — VPC through ALB IAM/IRSA — so that the cluster is ready for ArgoCD to take over.
 
 ---
 
 ## Prerequisites
 
-| Requirement | Version |
+### Required Tools
+
+Ensure the following tools are installed and available in your `$PATH` before proceeding:
+
+| Tool | Minimum Version | Install Guide |
+|---|---|---|
+| Terraform | `>= 1.10.0` | [developer.hashicorp.com/terraform/install](https://developer.hashicorp.com/terraform/install) |
+| AWS CLI | `>= 2.x` | [docs.aws.amazon.com/cli/latest/userguide/getting-started-install.html](https://docs.aws.amazon.com/cli/latest/userguide/getting-started-install.html) |
+| kubectl | `>= 1.30` | [kubernetes.io/docs/tasks/tools](https://kubernetes.io/docs/tasks/tools/) |
+| helm | `>= 3.x` | [helm.sh/docs/intro/install](https://helm.sh/docs/intro/install/) *(optional — used for manual chart inspection)* |
+
+> The **AWS Provider `>= 6.0.0`** is declared directly in `versions.tf` and pulled automatically by `terraform init`. You do not need to install it separately.
+
+Verify tool versions:
+
+```bash
+terraform version
+aws --version
+kubectl version --client
+helm version   # optional
+```
+
+### Required AWS Permissions
+
+The IAM principal (user or assumed role) running Terraform must have sufficient permissions to create and manage:
+
+- VPC, Subnets, Route Tables, Internet/NAT Gateways
+- Security Groups
+- IAM Roles, Policies, and OIDC Providers
+- EKS Clusters and Managed Node Groups
+- ECR Repositories
+- RDS Instances and Subnet Groups
+- KMS Key usage (for state encryption)
+- S3 and DynamoDB (for remote state)
+
+For dev environments, attaching **`AdministratorAccess`** is the easiest option. For production, scope down to least-privilege using the resource types above.
+
+### Bootstrap Resources
+
+The following resources must already exist **before** running `terraform init`:
+
+| Resource | Purpose |
 |---|---|
-| Terraform | >= 1.10.0 |
-| AWS Provider | >= 6.0.0 |
-| AWS CLI | >= 2.x |
-
-The following bootstrap resources must already exist before running this configuration:
-
-- S3 bucket for Terraform remote state
-- DynamoDB table for state locking
-- KMS key for state encryption
+| S3 Bucket | Remote state storage |
+| DynamoDB Table | State locking (prevents concurrent applies) |
+| KMS Key | Server-side encryption of the state file |
 
 Configure `backend.tf` with the names of those resources before running `terraform init`.
+
+### AWS Identity Verification
+
+Verify your AWS identity and confirm the correct account/region before starting:
+
+```bash
+# Configure credentials if not already set
+aws configure
+
+# Confirm identity
+aws sts get-caller-identity
+
+# Confirm target region (should match var.aws_region)
+aws configure get region
+```
 
 ---
 
@@ -56,13 +141,15 @@ Configure `backend.tf` with the names of those resources before running `terrafo
 
 | Module | What it provisions |
 |---|---|
-| `vpc` | VPC, public/private subnets, IGW, NAT Gateway, route tables |
+| `vpc` | VPC, public/private subnets (2 AZs), Internet Gateway, NAT Gateway, route tables |
+| `security-group` | Security Groups for EKS Control Plane, EKS Nodes, ALB, and RDS |
 | `iam` | EKS Cluster Role, EKS Node Group Role, IAM policy attachments |
-| `security_group` | Security Groups for EKS Control Plane, EKS Nodes, ALB, RDS |
-| `eks` | EKS Cluster 1.33, Managed Node Group, OIDC Provider, EBS CSI Driver |
-| `ecr` | ECR repositories for all Online Boutique microservices |
-| `alb` | IAM Policy + IRSA Role for AWS Load Balancer Controller |
-| `rds` | PostgreSQL 15 RDS instance, DB Subnet Group, Parameter Group |
+| `eks` | EKS Cluster, Managed Node Group, OIDC Provider, EBS CSI Driver |
+| `ecr` | ECR repositories for all 11 Online Boutique microservices |
+| `alb` | IAM Policy + IRSA Role for the AWS Load Balancer Controller |
+| `rds` | PostgreSQL RDS instance, DB Subnet Group, Parameter Group |
+
+> The AWS Load Balancer Controller, ArgoCD, Prometheus, Grafana, OPA Gatekeeper, and Falco are **not** created by these modules — Terraform only creates the IAM/IRSA roles they need. The workloads themselves are deployed by ArgoCD (see [Platform Tools — Deployed via GitOps](#platform-tools--deployed-via-gitops-not-terraform)).
 
 ---
 
@@ -99,19 +186,32 @@ export TF_VAR_db_password="<your-secure-password>"
 terraform init
 ```
 
-### 4. Review the plan
+### 4. Format & validate
 
 ```bash
-terraform plan
+terraform fmt -recursive
+terraform validate
 ```
 
-### 5. Apply
+### 5. Review the plan
+
+```bash
+terraform plan -out=tfplan
+```
+
+### 6. Apply
+
+```bash
+terraform apply tfplan
+```
+
+Or, without a saved plan:
 
 ```bash
 terraform apply
-``` 
+```
 
-### 6. Connect to the cluster
+### 7. Connect to the cluster
 
 After apply completes, run the kubeconfig command from the outputs:
 
@@ -123,6 +223,12 @@ Verify connectivity:
 
 ```bash
 kubectl get nodes
+```
+
+### 8. Destroy (when no longer needed)
+
+```bash
+terraform destroy
 ```
 
 ---
@@ -279,17 +385,17 @@ terraform destroy
 
 ## Module Dependency Graph
 
-```
+```text
 module.vpc    ─────────────────────────────────► module.security_group
               └──────────────────────────────────────────┐
-                                                         │
+                                                          │
 module.iam    ──────────────────────────────────────┐    │
               └──► module.ecr                       │    │
-                                                    ▼    ▼
-                                               module.eks
-                                                    │
-                                                    ▼
-                                               module.alb
+                                                     ▼    ▼
+                                                module.eks
+                                                     │
+                                                     ▼
+                                                module.alb
 
 module.vpc    ──► module.rds ◄── module.security_group
 ```
@@ -298,16 +404,20 @@ module.vpc    ──► module.rds ◄── module.security_group
 
 ## Platform Tools — Deployed via GitOps (not Terraform)
 
-The following tools are **not** provisioned by this Terraform configuration. They are deployed into the EKS cluster via ArgoCD after the infrastructure is ready:
+The following tools are **not** provisioned by this Terraform configuration. Once the infrastructure above is ready, they are deployed into the EKS cluster via ArgoCD using the **App of Apps** pattern:
 
 | Tool | Purpose | Requires Terraform output |
 |---|---|---|
-| AWS Load Balancer Controller | Dynamic ALB provisioning | `lbc_role_arn` |
-| ArgoCD | GitOps continuous delivery | — |
+| AWS Load Balancer Controller | Dynamic ALB provisioning for Ingress | `lbc_role_arn` |
+| ArgoCD | GitOps continuous delivery (Root Application / App of Apps) | `kubeconfig_command` |
+| Metrics Server | Resource metrics for `kubectl top` and HPA | — |
 | Prometheus | Metrics collection | — |
 | Grafana | Dashboards and visualization | — |
-| OPA Gatekeeper | Policy-as-Code enforcement | — |
+| OPA Gatekeeper | Policy-as-Code enforcement (admission control) | — |
 | Falco | Runtime threat detection | — |
+| Online Boutique | Demonstration microservices application | `ecr_repository_urls` |
+
+After Terraform finishes provisioning the cluster, ArgoCD's Root Application continuously synchronizes the Git repository and manages all of the above platform services and applications — Platform Services (Metrics Server, AWS Load Balancer Controller), Security (OPA Gatekeeper, Falco), Observability (Prometheus, Grafana), and Applications (Online Boutique).
 
 ---
 
@@ -316,7 +426,113 @@ The following tools are **not** provisioned by this Terraform configuration. The
 - Worker nodes run in **private subnets** only — no direct internet access.
 - RDS is **not publicly accessible** — reachable only from EKS nodes via Security Group rules.
 - EKS API server has **both public and private endpoint** enabled for dev. For prod, disable public access.
-- All IAM roles follow **least privilege** — each role has only the minimum permissions required.
+- All IAM roles follow **least privilege** — each role has only the minimum permissions required, including dedicated IRSA roles for EBS CSI Driver and AWS Load Balancer Controller.
 - ECR repositories allow **pull-only** for EKS nodes and full management for the account root.
 - EBS volumes and RDS storage are **encrypted at rest** with AES-256.
-- `db_password` is marked `sensitive = true` — never printed in plan or apply output.
+- `db_password` is marked `sensitive = true` — never printed in plan or apply output, and must be supplied via `TF_VAR_db_password`.
+- Security controls beyond the infrastructure layer (admission control, runtime threat detection) are enforced by **OPA Gatekeeper** and **Falco**, deployed via ArgoCD.
+
+---
+
+## Environment
+
+```text
+Environment : Development
+Region      : ap-southeast-1
+```
+
+---
+
+## Notes
+
+- Infrastructure provisioning is managed by **Terraform**.
+- Kubernetes platform services are managed by **ArgoCD**.
+- Security controls are enforced through **OPA Gatekeeper** and **Falco**.
+- Monitoring and observability are provided by **Prometheus** and **Grafana**.
+- Application delivery follows a **GitOps** workflow.
+- The **Online Boutique** application serves as the demonstration microservices workload for the platform.
+- The architecture follows the **AWS Well-Architected Framework** and **Terraform best practices**.
+
+---
+
+## Cost Considerations (Dev Environment)
+
+This configuration is intentionally optimized for **low cost** in development. Key cost-saving choices:
+
+| Resource | Choice | Cost Impact |
+|---|---|---|
+| NAT Gateway | Single NAT (`single_nat_gateway = true`) | ~$32/month vs ~$64/month for HA |
+| EKS Nodes | `t3.medium` × 2 (desired) | ~$60/month for 2 nodes |
+| RDS | `db.t3.micro`, single-AZ, no read replica | ~$15/month |
+| EKS Control Plane | 1 cluster | Fixed ~$72/month (AWS-managed) |
+
+> **Estimated total: ~$180–$220/month** depending on data transfer and storage usage. Run `terraform destroy` when the environment is no longer needed to avoid ongoing charges.
+
+---
+
+## Troubleshooting
+
+### `terraform init` fails — backend not found
+
+Ensure the S3 bucket, DynamoDB table, and KMS key exist in the target region and that your IAM principal has access to them. Double-check the values in `backend.tf`.
+
+### `terraform apply` fails on EKS
+
+Kubernetes version `1.33` may not be available in all regions. Check available versions:
+
+```bash
+aws eks describe-addon-versions --region ap-southeast-1 \
+  --query 'addons[0].addonVersions[].addonVersion' --output table
+```
+
+### `kubectl get nodes` returns no output
+
+Re-run the kubeconfig update and verify the node group is `ACTIVE`:
+
+```bash
+terraform output -raw kubeconfig_command | bash
+aws eks describe-nodegroup \
+  --cluster-name $(terraform output -raw cluster_name) \
+  --nodegroup-name <nodegroup-name> \
+  --region ap-southeast-1 \
+  --query 'nodegroup.status'
+```
+
+### RDS password rejected at apply time
+
+`TF_VAR_db_password` is not persisted between shell sessions. Re-export before every `terraform apply`:
+
+```bash
+export TF_VAR_db_password="<your-secure-password>"
+terraform apply
+```
+
+### Pods stuck in `Pending` — insufficient node capacity
+
+The default node group uses `t3.medium` (2 vCPU / 4 GiB RAM). If the full stack exceeds capacity, scale up temporarily:
+
+```bash
+terraform apply -var="node_desired_size=3"
+```
+
+---
+
+## CI/CD Integration (GitHub Actions)
+
+This environment is designed to be applied via the `terraform-apply` GitHub Actions workflow. The workflow handles:
+
+1. `terraform init` with the remote backend
+2. `terraform fmt` and `terraform validate` checks
+3. `terraform plan` with the plan saved as a workflow artifact
+4. `terraform apply` on the saved plan (manual approval gate for production)
+5. `bootstrap-argocd` step — installs ArgoCD and applies the Root Application after infrastructure is ready
+
+Required GitHub Actions secrets:
+
+| Secret | Description |
+|---|---|
+| `AWS_ACCESS_KEY_ID` | IAM access key with deployment permissions |
+| `AWS_SECRET_ACCESS_KEY` | Corresponding secret key |
+| `TF_VAR_db_password` | RDS master password |
+
+> For production pipelines, prefer **OIDC-based authentication** (IAM Roles for GitHub Actions) over static access keys to eliminate long-lived credentials.
