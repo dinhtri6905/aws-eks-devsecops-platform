@@ -89,6 +89,7 @@ platform/
         │       ├── emailservice/                  # Gửi email xác nhận
         │       ├── adservice/                     # Quảng cáo sản phẩm
         │       ├── loadgenerator/                 # Sinh traffic phục vụ test
+        │       ├── shoppingassistantservice/      # Trợ lý AI tư vấn mua sắm
         │       └── kustomization.yaml
         │
         └── overlays/                              # Multi-environment Configuration
