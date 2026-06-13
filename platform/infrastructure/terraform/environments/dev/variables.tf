@@ -282,7 +282,7 @@ variable "argocd_ha_enabled" {
 variable "gitops_repo_url" {
   description = "URL of the GitOps repository ArgoCD will watch"
   type        = string
-  default = "https://github.com/dinhtri6905/aws-eks-devsecops-platform"
+  default     = "https://github.com/dinhtri6905/aws-eks-devsecops-platform"
 }
 
 variable "gitops_repo_branch" {
