@@ -1,0 +1,46 @@
+apiVersion: templates.gatekeeper.sh/v1
+kind: ConstraintTemplate
+metadata:
+  name: k8sallowedrepos
+  annotations:
+    description: >-
+      Restricts container images to a set of allowed registry
+      prefixes (e.g. the project's Amazon ECR registry), to
+      prevent pulling unverified images from public registries.
+spec:
+  crd:
+    spec:
+      names:
+        kind: K8sAllowedRepos
+      validation:
+        openAPIV3Schema:
+          type: object
+          properties:
+            repos:
+              type: array
+              items:
+                type: string
+  targets:
+    - target: admission.k8s.gatekeeper.sh
+      rego: |
+        package k8sallowedrepos
+
+        violation[{"msg": msg}] {
+          c := input_containers[_]
+          img := c.image
+          not allowed(img)
+          msg := sprintf("Container '%v' uses image '%v' from a registry that is not in the allowed list", [c.name, img])
+        }
+
+        allowed(img) {
+          allowed_repo := input.parameters.repos[_]
+          startswith(img, allowed_repo)
+        }
+
+        input_containers[c] {
+          c := input.review.object.spec.containers[_]
+        }
+
+        input_containers[c] {
+          c := input.review.object.spec.initContainers[_]
+        }

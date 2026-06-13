@@ -1,0 +1,25 @@
+apiVersion: constraints.gatekeeper.sh/v1beta1
+kind: K8sAllowedRepos
+metadata:
+  name: allow-ecr-and-trusted-registries-only
+spec:
+  match:
+    kinds:
+      - apiGroups: [""]
+        kinds: ["Pod"]
+    excludedNamespaces:
+      - kube-system
+      - gatekeeper-system
+      - falco
+      - argocd
+      - monitoring
+  parameters:
+    repos:
+      # Replace <ACCOUNT_ID> with the AWS account ID running the
+      # ECR registry created by the `ecr` Terraform module.
+      - "<ACCOUNT_ID>.dkr.ecr.ap-southeast-1.amazonaws.com/aws-eks-devsecops-dev/"
+      - "<ACCOUNT_ID>.dkr.ecr.ap-southeast-1.amazonaws.com/aws-eks-devsecops-prod/"
+      # Trusted public registries used by platform add-ons
+      - "registry.k8s.io/"
+      - "quay.io/jetstack/"
+      - "ghcr.io/falcosecurity/"

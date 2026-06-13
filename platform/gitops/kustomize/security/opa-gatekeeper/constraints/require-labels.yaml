@@ -1,0 +1,17 @@
+apiVersion: constraints.gatekeeper.sh/v1beta1
+kind: K8sRequiredLabels
+metadata:
+  name: require-app-labels
+spec:
+  match:
+    kinds:
+      - apiGroups: [""]
+        kinds: ["Pod"]
+    namespaces:
+      - online-boutique
+  parameters:
+    labels:
+      - key: "app.kubernetes.io/name"
+        allowedRegex: "^[a-z0-9-]+$"
+      - key: "app.kubernetes.io/part-of"
+        allowedRegex: "^aws-eks-devsecops-platform$"

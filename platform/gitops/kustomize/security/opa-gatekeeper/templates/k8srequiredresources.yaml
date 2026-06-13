@@ -1,0 +1,44 @@
+apiVersion: templates.gatekeeper.sh/v1
+kind: ConstraintTemplate
+metadata:
+  name: k8srequiredresources
+  annotations:
+    description: >-
+      Requires all containers to define CPU/memory requests
+      and limits, preventing noisy-neighbor and resource
+      exhaustion issues on shared EKS nodes.
+spec:
+  crd:
+    spec:
+      names:
+        kind: K8sRequiredResources
+      validation:
+        openAPIV3Schema:
+          type: object
+          properties:
+            limits:
+              type: array
+              items:
+                type: string
+            requests:
+              type: array
+              items:
+                type: string
+  targets:
+    - target: admission.k8s.gatekeeper.sh
+      rego: |
+        package k8srequiredresources
+
+        violation[{"msg": msg}] {
+          c := input.review.object.spec.containers[_]
+          required := input.parameters.requests[_]
+          not c.resources.requests[required]
+          msg := sprintf("Container '%v' is missing resource request '%v'", [c.name, required])
+        }
+
+        violation[{"msg": msg}] {
+          c := input.review.object.spec.containers[_]
+          required := input.parameters.limits[_]
+          not c.resources.limits[required]
+          msg := sprintf("Container '%v' is missing resource limit '%v'", [c.name, required])
+        }

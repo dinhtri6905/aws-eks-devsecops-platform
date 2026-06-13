@@ -1,0 +1,16 @@
+# ============================================================
+# security
+# Aggregates the Security Layer (DevSecOps):
+#   - opa-gatekeeper: Policy-as-Code admission control
+#   - falco:          Runtime threat detection
+#
+# Referenced directly by
+# platform/gitops/argocd/applications/security.yaml via
+# `source.path: platform/gitops/kustomize/security`.
+# ============================================================
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+resources:
+  - opa-gatekeeper
+  - falco

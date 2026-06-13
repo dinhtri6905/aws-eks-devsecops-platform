@@ -1,0 +1,19 @@
+apiVersion: constraints.gatekeeper.sh/v1beta1
+kind: K8sReadOnlyRootFS
+metadata:
+  name: require-read-only-root-filesystem
+spec:
+  match:
+    kinds:
+      - apiGroups: [""]
+        kinds: ["Pod"]
+    excludedNamespaces:
+      - kube-system
+      - gatekeeper-system
+      - falco
+      - argocd
+      - monitoring
+  parameters:
+    # Some Online Boutique services (e.g. loadgenerator) write
+    # temp files at startup; exempt by image prefix if needed.
+    exemptImages: []
