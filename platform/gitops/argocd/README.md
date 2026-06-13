@@ -1,252 +1,282 @@
 ```bash
 platform/gitops/
 ├── root-app.yaml
-# 👉 ArgoCD App-of-Apps root
-# 👉 Entry point duy nhất để sync toàn bộ system
-# 👉 Nó sẽ trỏ xuống applications/*
-
+├── projects/
+│   └── platform.yaml
 │
+├── applications/
+│   ├── platform-services.yaml
+│   ├── security.yaml
+│   ├── observability.yaml
+│   └── online-boutique.yaml
+│
+└── kustomize/
+    ├── base/
+    │   ├── namespace.yaml
+    │   ├── common-labels.yaml
+    │   └── kustomization.yaml
+    │
+    ├── platform-services/
+    │   ├── metrics-server/
+    │   │   ├── kustomization.yaml
+    │   │   └── values.yaml
+    │   │
+    │   └── aws-load-balancer-controller/
+    │       ├── kustomization.yaml
+    │       ├── values.yaml
+    │       └── ingressclass.yaml
+    │
+    ├── security/
+    │   ├── opa-gatekeeper/
+    │   │   ├── kustomization.yaml
+    │   │   ├── values.yaml
+    │   │   ├── templates/
+    │   │   └── constraints/
+    │   │       ├── require-resource-limits.yaml
+    │   │       ├── require-non-root.yaml
+    │   │       ├── disallow-privileged.yaml
+    │   │       └── require-labels.yaml
+    │   │
+    │   └── falco/
+    │       ├── kustomization.yaml
+    │       ├── configmap.yaml
+    │       └── daemonset.yaml
+    │
+    ├── observability/
+    │   └── kube-prometheus-stack/
+    │       ├── kustomization.yaml
+    │       ├── values.yaml
+    │       ├── dashboards/
+    │       │   ├── cluster-overview.json
+    │       │   ├── node-metrics.json
+    │       │   └── application-metrics.json
+    │       │
+    │       ├── alerts/
+    │       │   ├── cpu-usage.yaml
+    │       │   ├── memory-usage.yaml
+    │       │   └── pod-restarts.yaml
+    │       │
+    │       └── servicemonitors/
+    │           ├── kubernetes.yaml
+    │           └── custom-apps.yaml
+    │
+    ├── applications/
+    │   └── online-boutique/
+    │       ├── adservice/
+    │       ├── cartservice/
+    │       ├── frontend/
+    │       ├── productcatalogservice/
+    │       ├── checkoutservice/
+    │       ├── paymentservice/
+    │       ├── shippingservice/
+    │       ├── recommendationservice/
+    │       ├── currencyservice/
+    │       ├── emailservice/
+    │       ├── loadgenerator/
+    │       └── kustomization.yaml
+    │
+    └── overlays/
+        ├── dev/
+        │   ├── kustomization.yaml
+        │   ├── replicas-patch.yaml
+        │   └── configmap-patch.yaml
+        │
+        └── prod/
+            ├── kustomization.yaml
+            ├── replicas-patch.yaml
+            ├── hpa.yaml
+            └── resource-limits-patch.yaml
+```
+
+```bash
+platform/gitops/
+├── root-app.yaml
+# 👉 ArgoCD App-of-Apps entry point
+# 👉 Deploy toàn bộ hệ thống GitOps từ 1 root
+# 👉 Trỏ xuống: applications/*
+
 ├── projects/
 │   └── platform.yaml
 # 👉 ArgoCD Project
-# 👉 Define:
-#    - namespace allowed
+# 👉 Define security boundary:
 #    - repo allowed
+#    - namespace allowed
 #    - cluster scope
-# 👉 Security boundary cho GitOps
+# 👉 Kiểm soát quyền deploy trong ArgoCD
 
 │
 ├── applications/
-│
 │   ├── platform-services.yaml
 # 👉 ArgoCD Application
-# 👉 Deploy infra tools:
-#    - metrics-server
-#    - aws-load-balancer-controller
-# 👉 thường dùng Helm hoặc Kustomize
-# 👉 chạy trước app
+# 👉 Deploy cluster add-ons:
+#    - metrics-server (HPA metrics)
+#    - aws-load-balancer-controller (ALB/NLB AWS)
+# 👉 nền tảng cho toàn cluster
 
-│
 │   ├── security.yaml
 # 👉 ArgoCD Application
 # 👉 Deploy security layer:
-#    - OPA Gatekeeper
-#    - Falco
-# 👉 enforce policy + runtime security
+#    - OPA Gatekeeper (policy enforcement)
+#    - Falco (runtime security detection)
+# 👉 đảm bảo cluster compliance + security
 
-│
 │   ├── observability.yaml
 # 👉 ArgoCD Application
 # 👉 Deploy monitoring stack:
-#    - Prometheus
-#    - Grafana
-# 👉 collect metrics + dashboards
+#    - Prometheus (metrics collection)
+#    - Grafana (dashboard visualization)
+# 👉 theo dõi toàn bộ cluster + app
 
-│
 │   └── online-boutique.yaml
 # 👉 ArgoCD Application
-# 👉 Deploy microservices app demo
-# 👉 depends on platform-services + security + observability
+# 👉 Deploy microservices application
+# 👉 phụ thuộc platform-services + security + observability
 
 │
 └── kustomize/
-    # ======================================================
-    # 1. BASE LAYER (shared config)
-    # ======================================================
+
     ├── base/
     │   ├── namespace.yaml
-    # 👉 define Kubernetes namespaces
-    # 👉 ví dụ: dev, prod, monitoring, security
-    # 👉 tách workload isolation
+    # 👉 tạo Kubernetes namespaces
+    # 👉 tách môi trường (dev/prod/monitoring/security)
 
-    │
     │   ├── common-labels.yaml
-    # 👉 inject labels chung:
+    # 👉 inject labels chuẩn:
     #    app, env, team, managed-by
-    # 👉 giúp:
-    #    - monitoring
-    #    - cost tracking
+    # 👉 phục vụ:
+    #    - tracking
+    #    - observability
     #    - governance
 
-    │
     │   └── kustomization.yaml
-    # 👉 base aggregator
-    # 👉 gom namespace + labels + shared config
+    # 👉 gom base resources lại để reuse
 
-    # ======================================================
-    # 2. PLATFORM SERVICES (Cluster Add-ons)
-    # ======================================================
-
+    │
     ├── platform-services/
 
     │   ├── metrics-server/
-    │   │   ├── deployment.yaml
-    # 👉 Metrics API cho HPA (autoscaling)
-    # 👉 cung cấp CPU/Memory metrics cho cluster
+    │   │   ├── kustomization.yaml
+    # 👉 định nghĩa cách deploy metrics-server
+    # 👉 phục vụ HPA (autoscaling CPU/Memory)
 
-    │   │   ├── service.yaml
-    # 👉 expose metrics-server service
-
-    │   │   └── kustomization.yaml
-    # 👉 build metrics-server stack
+    │   │   └── values.yaml
+    # 👉 config Helm chart metrics-server
+    # 👉 không tự viết deployment thủ công
 
     │
     │   └── aws-load-balancer-controller/
-    │       ├── deployment.yaml
-    # 👉 controller tạo ALB/NLB trên AWS
-    # 👉 đọc Ingress → tạo Load Balancer
+    │       ├── kustomization.yaml
+    # 👉 deploy AWS LB controller bằng ArgoCD
 
-    │       ├── service.yaml
-    # 👉 service cho controller pods
+    │       ├── values.yaml
+    # 👉 config Helm chart:
+    #    - IAM role (IRSA)
+    #    - cluster name
+    #    - region
 
-    │       ├── ingressclass.yaml
-    # 👉 define ingress class: alb
-    # 👉 map ingress → AWS ALB
+    │       └── ingressclass.yaml
+    # 👉 định nghĩa IngressClass "alb"
+    # 👉 mapping Ingress → AWS Load Balancer Controller
+    # 👉 KHÔNG tạo ALB trực tiếp, chỉ route rule
 
-    │       └── kustomization.yaml
-    # 👉 bundle toàn bộ AWS LB controller
-
-    # ======================================================
-    # 3. SECURITY LAYER
-    # ======================================================
-
+    │
     ├── security/
 
     │   ├── opa-gatekeeper/
+    │   │   ├── kustomization.yaml
+    # 👉 deploy OPA Gatekeeper controller
+
+    │   │   ├── values.yaml
+    # 👉 Helm config cho policy engine
+
     │   │   ├── templates/
-    # 👉 constraint templates (logic rule engine)
-    # 👉 define policy schema
+    # 👉 định nghĩa policy schema (logic rules)
 
-    │   │   ├── constraints/
-    │   │   │   ├── require-resource-limits.yaml
-    # 👉 bắt container phải có CPU/RAM limits
-
-    │   │   │   ├── require-non-root.yaml
-    # 👉 cấm chạy container bằng root user
-
-    │   │   │   ├── disallow-privileged.yaml
-    # 👉 cấm privileged container (host access)
-
-    │   │   │   └── require-labels.yaml
-    # 👉 bắt resource phải có labels chuẩn
-
-    │   │   └── kustomization.yaml
-    # 👉 deploy Gatekeeper + policies
+    │   │   └── constraints/
+    # 👉 áp dụng policy vào cluster:
+    #    - require limits
+    #    - non-root container
+    #    - no privileged container
+    #    - required labels
 
     │
     │   └── falco/
+    │       ├── kustomization.yaml
+    # 👉 deploy Falco runtime security
+
     │       ├── configmap.yaml
-    # 👉 config rule detection (syscall rules)
-    # 👉 detect suspicious behavior
+    # 👉 rule detection config:
+    #    - suspicious syscall
+    #    - abnormal container behavior
 
-    │       ├── daemonset.yaml
-    # 👉 run Falco on every node
-    # 👉 collect runtime security events
-
-    │       └── kustomization.yaml
-    # 👉 deploy Falco system
-
-    # ======================================================
-    # 4. OBSERVABILITY STACK
-    # ======================================================
-
-    ├── observability/
-
-    │   ├── prometheus/
-    │   │   ├── deployment.yaml
-    # 👉 Prometheus server
-    # 👉 scrape metrics từ cluster + apps
-
-    │   │   ├── service.yaml
-    # 👉 expose Prometheus UI/API
-
-    │   │   └── kustomization.yaml
-    # 👉 deploy monitoring backend
-
+    │       └── daemonset.yaml
+    # 👉 chạy trên EVERY node
+    # 👉 monitor runtime security events
     │
-    │   └── grafana/
-    │       ├── deployment.yaml
-    # 👉 Grafana UI dashboard
-
-    │       ├── service.yaml
-    # 👉 expose Grafana UI
-
-    │       ├── dashboards/
-    # 👉 JSON dashboards:
-    #    - cluster metrics
-    #    - pod CPU/RAM
-    #    - app latency
-
-    │       └── kustomization.yaml
-    # 👉 bundle Grafana config
-
-    # ======================================================
-    # 5. APPLICATION LAYER (MICROSERVICES)
-    # ======================================================
-
     ├── applications/
     │   └── online-boutique/
-
     │       ├── adservice/
-    # 👉 ads microservice (recommendation ads)
+    # 👉 microservice quảng cáo / recommendation
 
     │       ├── cartservice/
-    # 👉 shopping cart logic
+    # 👉 quản lý giỏ hàng
 
     │       ├── frontend/
-    # 👉 UI web app
+    # 👉 UI web application
 
-    │       ├── productcatalog/
-    # 👉 product database service
+    │       ├── productcatalogservice/
+    # 👉 database product service
 
     │       ├── checkoutservice/
-    # 👉 checkout workflow
+    # 👉 xử lý checkout flow
 
     │       ├── paymentservice/
-    # 👉 payment simulation
+    # 👉 xử lý payment logic (mock)
 
     │       ├── shippingservice/
-    # 👉 shipping calculation
+    # 👉 tính shipping
+
+    │       ├── recommendationservice/
+    # 👉 gợi ý sản phẩm
+
+    │       ├── currencyservice/
+    # 👉 chuyển đổi tiền tệ
+
+    │       ├── emailservice/
+    # 👉 gửi email notification
+
+    │       ├── loadgenerator/
+    # 👉 generate traffic để test system
 
     │       └── kustomization.yaml
-    # 👉 gom tất cả microservices lại
-    # 👉 define deployment + service + config
+    # 👉 gom toàn bộ microservices lại để deploy
 
-    # ======================================================
-    # 6. ENVIRONMENT OVERLAYS
-    # ======================================================
-
+    │
     └── overlays/
 
         ├── dev/
         │   ├── kustomization.yaml
-        # 👉 override base cho DEV environment
-        # 👉 thường:
-        #    - replicas thấp
-        #    - debug enabled
+        # 👉 override config cho môi trường dev
+        # 👉 dùng cho testing / development
 
         │   ├── replicas-patch.yaml
-        # 👉 set replicas = 1
+        # 👉 giảm replica (tiết kiệm tài nguyên)
 
         │   └── configmap-patch.yaml
-        # 👉 dev config:
-        #    - log level debug
-        #    - test endpoints
+        # 👉 bật debug, log level verbose
 
         │
         └── prod/
             ├── kustomization.yaml
-            # 👉 production overlay
-            # 👉 stable config
+            # 👉 production environment config
 
             ├── replicas-patch.yaml
-            # 👉 scale replicas (HA)
+            # 👉 scale replicas cao (HA)
 
             ├── hpa.yaml
-            # 👉 autoscaling config
-            # 👉 CPU/Memory based scaling
+            # 👉 autoscaling policy (CPU/Memory)
 
             └── resource-limits-patch.yaml
                 # 👉 enforce CPU/Memory limits
-                # 👉 prevent resource abuse
+                # 👉 tránh resource abuse + đảm bảo stability
 ```

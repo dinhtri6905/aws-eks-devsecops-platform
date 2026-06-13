@@ -164,15 +164,20 @@ aws-eks-devsecops-platform/
     │       │       └── kustomization.yaml
     │       │
     │       ├── observability/
-    │       │   ├── prometheus/
-    │       │   │   ├── deployment.yaml
-    │       │   │   ├── service.yaml
-    │       │   │   └── kustomization.yaml
-    │       │   └── grafana/
-    │       │       ├── deployment.yaml
-    │       │       ├── service.yaml
+    │       │   └── kube-prometheus-stack/
+    │       │       ├── kustomization.yaml
+    │       │       ├── values.yaml
     │       │       ├── dashboards/
-    │       │       └── kustomization.yaml
+    │       │       │   ├── cluster-overview.json
+    │       │       │   ├── node-metrics.json
+    │       │       │   └── application-metrics.json
+    │       │       ├── alerts/
+    │       │       │   ├── cpu-usage.yaml
+    │       │       │   ├── memory-usage.yaml
+    │       │       │   └── pod-restarts.yaml
+    │       │       └── servicemonitors/
+    │       │           ├── kubernetes.yaml
+    │       │           └── custom-apps.yaml
     │       │
     │       ├── applications/
     │       │   └── online-boutique/
