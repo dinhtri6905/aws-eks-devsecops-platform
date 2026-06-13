@@ -11,25 +11,25 @@ name: Application CI
 # =============================================================================
 
 on:
-  push:
-    branches:
-      - develop
-      - "feature/**"
-    paths:
-      - "platform/gitops/**"
-      - "platform/security/opa/**"
-      - "platform/security/falco/**"
-      - "microservices-application/**"
-      - ".github/workflows/app-ci.yaml"
-  pull_request:
-    branches:
-      - develop
-    paths:
-      - "platform/gitops/**"
-      - "platform/security/opa/**"
-      - "platform/security/falco/**"
-      - "microservices-application/**"
-      - ".github/workflows/app-ci.yaml"
+  # push:
+  #   branches:
+  #     - develop
+  #     - "feature/**"
+  #   paths:
+  #     - "platform/gitops/**"
+  #     - "platform/security/opa/**"
+  #     - "platform/security/falco/**"
+  #     - "microservices-application/**"
+  #     - ".github/workflows/app-ci.yaml"
+  # pull_request:
+  #   branches:
+  #     - develop
+  #   paths:
+  #     - "platform/gitops/**"
+  #     - "platform/security/opa/**"
+  #     - "platform/security/falco/**"
+  #     - "microservices-application/**"
+  #     - ".github/workflows/app-ci.yaml"
   workflow_dispatch:
 
 # =============================================================================
