@@ -1,0 +1,17 @@
+# Dev: all Deployments run 1 replica to save cost
+# Applied to every Deployment via target selector in kustomization.yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: not-used
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: not-used
+  template:
+    metadata:
+      labels:
+        app: not-used
+    spec:
+      containers: []

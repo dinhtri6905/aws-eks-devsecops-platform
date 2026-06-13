@@ -1,0 +1,16 @@
+# Prod: minimum 2 replicas on every Deployment for high availability
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: not-used
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: not-used
+  template:
+    metadata:
+      labels:
+        app: not-used
+    spec:
+      containers: []

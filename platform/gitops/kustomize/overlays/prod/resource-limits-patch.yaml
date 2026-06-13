@@ -1,0 +1,26 @@
+# Prod: higher resource limits to handle real traffic
+# Applied to every Deployment — fine-tune per-service if needed
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: not-used
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: not-used
+  template:
+    metadata:
+      labels:
+        app: not-used
+    spec:
+      containers:
+        - name: not-used
+          image: not-used
+          resources:
+            requests:
+              cpu: 200m
+              memory: 128Mi
+            limits:
+              cpu: 500m
+              memory: 256Mi
