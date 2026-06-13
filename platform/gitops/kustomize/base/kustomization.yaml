@@ -1,0 +1,21 @@
+# ============================================================
+# Base Kustomization
+# Provides shared namespaces and common labels for all
+# platform layers (platform-services, security, observability,
+# applications). Referenced as a base by overlays/dev and
+# overlays/prod.
+# ============================================================
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+resources:
+  - namespace.yaml
+
+# Applied to every resource produced by this kustomization
+# and by anything that includes it as a base.
+labels:
+  - pairs:
+      app.kubernetes.io/part-of: aws-eks-devsecops-platform
+      app.kubernetes.io/managed-by: argocd
+      project: eks-devsecops
+    includeSelectors: false

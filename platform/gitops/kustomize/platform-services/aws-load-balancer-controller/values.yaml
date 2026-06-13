@@ -1,0 +1,61 @@
+# ============================================================
+# Helm values for aws-load-balancer-controller
+# Chart: https://github.com/aws/eks-charts (aws-load-balancer-controller)
+#
+# IRSA role ARN comes from the Terraform `eks` module output
+# `alb_controller_role_arn` (see
+# platform/infrastructure/terraform/modules/eks/outputs.tf).
+# Replace <ALB_CONTROLLER_ROLE_ARN> with that output, or wire
+# it via the overlays/dev|prod configmap/patch pipeline.
+# ============================================================
+
+clusterName: eks-devsecops-dev-cluster
+
+region: ap-southeast-1
+vpcId: "" # filled by overlay patch from terraform output `vpc_id`, or set explicitly
+
+replicaCount: 1
+
+image:
+  repository: public.ecr.aws/eks/aws-load-balancer-controller
+  tag: v2.9.0
+
+serviceAccount:
+  create: true
+  name: aws-load-balancer-controller
+  annotations:
+    eks.amazonaws.com/role-arn: "arn:aws:iam::<ACCOUNT_ID>:role/eks-devsecops-dev-alb-controller-role"
+
+# Disable the controller's own webhook cert auto-generation
+# only if cert-manager is used instead. Default (true) is fine
+# for a standalone deploy.
+enableCertManager: false
+
+resources:
+  requests:
+    cpu: 100m
+    memory: 128Mi
+  limits:
+    cpu: 200m
+    memory: 256Mi
+
+securityContext:
+  runAsNonRoot: true
+  runAsUser: 65534
+  readOnlyRootFilesystem: true
+  allowPrivilegeEscalation: false
+  capabilities:
+    drop:
+      - ALL
+
+podDisruptionBudget:
+  enabled: false
+  minAvailable: 1
+
+# IngressClass is created separately via ingressclass.yaml so
+# it can be referenced explicitly by Online Boutique's Ingress
+# (`spec.ingressClassName: alb`).
+createIngressClassResource: false
+
+serviceMonitor:
+  enabled: false

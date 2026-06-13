@@ -1,0 +1,11 @@
+# ============================================================
+# Common labels applied to all resources built from base.
+#
+# This file documents the label set that base/kustomization.yaml
+# applies via the `labels` (commonLabels) directive. Kept as a
+# standalone reference so overlays and other layers can mirror
+# the same convention when they define their own commonLabels.
+# ============================================================
+app.kubernetes.io/part-of: aws-eks-devsecops-platform
+app.kubernetes.io/managed-by: argocd
+project: eks-devsecops

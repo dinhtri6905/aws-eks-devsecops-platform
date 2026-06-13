@@ -81,7 +81,7 @@ variable "single_nat_gateway" {
 variable "cluster_name" {
   description = "EKS cluster name"
   type        = string
-  default     = "eks-devsecops-dev-eks-cluster"
+  default     = "eks-devsecops-dev-cluster"
 }
 
 variable "kubernetes_version" {

@@ -1,0 +1,59 @@
+# ============================================================
+# Helm values for metrics-server
+# Chart: https://github.com/kubernetes-sigs/metrics-server
+# Repo:  https://kubernetes-sigs.github.io/metrics-server/
+# ============================================================
+
+replicas: 1
+
+# EKS managed node groups use private DNS / VPC CNI; the
+# kubelet's certificate is typically not signed for the
+# internal IP, so --kubelet-insecure-tls is commonly required
+# unless a custom CA / cert-manager setup is in place.
+args:
+  - --kubelet-preferred-address-types=InternalIP
+  - --kubelet-insecure-tls
+  - --metric-resolution=15s
+
+resources:
+  requests:
+    cpu: 50m
+    memory: 64Mi
+  limits:
+    cpu: 200m
+    memory: 256Mi
+
+# Run as non-root, read-only root filesystem — aligns with
+# the OPA Gatekeeper constraints in platform/security/opa.
+securityContext:
+  runAsNonRoot: true
+  runAsUser: 1000
+  readOnlyRootFilesystem: true
+  allowPrivilegeEscalation: false
+  capabilities:
+    drop:
+      - ALL
+
+podSecurityContext:
+  fsGroup: 1000
+
+# Schedule on any node; metrics-server is small and can run
+# alongside other system add-ons.
+nodeSelector: {}
+tolerations: []
+affinity: {}
+
+# Pod Disruption Budget keeps at least one replica available
+# during node rotations (only meaningful if replicas > 1,
+# kept here for prod overlay to bump replicas).
+podDisruptionBudget:
+  enabled: false
+  minAvailable: 1
+
+serviceMonitor:
+  enabled: false
+
+defaultArgs:
+  - --cert-dir=/tmp
+  - --secure-port=10250
+  - --metric-resolution=15s

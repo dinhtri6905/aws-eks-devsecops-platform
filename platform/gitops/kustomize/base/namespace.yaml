@@ -1,0 +1,47 @@
+# ============================================================
+# Namespaces used across the platform.
+# Created here so they exist before any Application that
+# targets them syncs (CreateNamespace=true also covers this,
+# but declaring them explicitly keeps labels/annotations
+# consistent and lets common-labels.yaml apply to them).
+# ============================================================
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: online-boutique
+  labels:
+    app.kubernetes.io/part-of: aws-eks-devsecops-platform
+    platform-layer: applications
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: monitoring
+  labels:
+    app.kubernetes.io/part-of: aws-eks-devsecops-platform
+    platform-layer: observability
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: security
+  labels:
+    app.kubernetes.io/part-of: aws-eks-devsecops-platform
+    platform-layer: security
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: gatekeeper-system
+  labels:
+    app.kubernetes.io/part-of: aws-eks-devsecops-platform
+    platform-layer: security
+    admission.gatekeeper.sh/ignore: "true"
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: falco
+  labels:
+    app.kubernetes.io/part-of: aws-eks-devsecops-platform
+    platform-layer: security

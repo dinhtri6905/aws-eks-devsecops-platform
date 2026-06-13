@@ -1,0 +1,17 @@
+# ============================================================
+# metrics-server
+# Provides CPU/Memory metrics for `kubectl top` and the
+# Horizontal Pod Autoscaler (used by overlays/prod/hpa.yaml).
+# ============================================================
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: kube-system
+
+helmCharts:
+  - name: metrics-server
+    repo: https://kubernetes-sigs.github.io/metrics-server/
+    version: 3.12.2
+    releaseName: metrics-server
+    namespace: kube-system
+    valuesFile: values.yaml
