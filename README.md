@@ -96,9 +96,8 @@ This project follows modern Platform Engineering practices and showcases Infrast
 
 ## Project Structure
 
-```text
+```bash
 aws-eks-devsecops-platform/
-│
 ├── .github/
 │   └── workflows/
 │
@@ -111,7 +110,6 @@ aws-eks-devsecops-platform/
 │   └── online-boutique/
 │
 └── platform/
-    │
     ├── infrastructure/
     │   └── terraform/
     │       ├── bootstrap/
@@ -129,7 +127,74 @@ aws-eks-devsecops-platform/
     │
     ├── gitops/
     │   ├── argocd/
+    │   │   ├── root-app.yaml
+    │   │   ├── projects.yaml
+    │   │   └── applications/
+    │   │       ├── platform-services.yaml
+    │   │       ├── security.yaml
+    │   │       ├── observability.yaml
+    │   │       └── online-boutique.yaml
+    │   │
     │   └── kustomize/
+    │       ├── base/
+    │       │   ├── namespace.yaml
+    │       │   ├── common-labels.yaml
+    │       │   └── kustomization.yaml
+    │       │
+    │       ├── platform-services/
+    │       │   ├── metrics-server/
+    │       │   │   ├── kustomization.yaml
+    │       │   │   └── values.yaml
+    │       │   └── aws-load-balancer-controller/
+    │       │       ├── kustomization.yaml
+    │       │       └── values.yaml
+    │       │
+    │       ├── security/
+    │       │   ├── opa-gatekeeper/
+    │       │   │   ├── kustomization.yaml
+    │       │   │   ├── values.yaml
+    │       │   │   └── constraints/
+    │       │   │       ├── require-resource-limits.yaml
+    │       │   │       ├── require-non-root.yaml
+    │       │   │       ├── disallow-privileged.yaml
+    │       │   │       └── require-labels.yaml
+    │       │   └── falco/
+    │       │       ├── configmap.yaml
+    │       │       ├── daemonset.yaml
+    │       │       └── kustomization.yaml
+    │       │
+    │       ├── observability/
+    │       │   ├── prometheus/
+    │       │   │   ├── deployment.yaml
+    │       │   │   ├── service.yaml
+    │       │   │   └── kustomization.yaml
+    │       │   └── grafana/
+    │       │       ├── deployment.yaml
+    │       │       ├── service.yaml
+    │       │       ├── dashboards/
+    │       │       └── kustomization.yaml
+    │       │
+    │       ├── applications/
+    │       │   └── online-boutique/
+    │       │       ├── adservice/
+    │       │       ├── cartservice/
+    │       │       ├── frontend/
+    │       │       ├── productcatalog/
+    │       │       ├── checkoutservice/
+    │       │       ├── paymentservice/
+    │       │       ├── shippingservice/
+    │       │       └── kustomization.yaml
+    │       │
+    │       └── overlays/
+    │           ├── dev/
+    │           │   ├── kustomization.yaml
+    │           │   ├── replicas-patch.yaml
+    │           │   └── configmap-patch.yaml
+    │           └── prod/
+    │               ├── kustomization.yaml
+    │               ├── replicas-patch.yaml
+    │               ├── hpa.yaml
+    │               └── resource-limits-patch.yaml
     │
     ├── security/
     │   ├── opa/
