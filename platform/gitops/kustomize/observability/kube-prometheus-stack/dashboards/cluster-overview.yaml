@@ -1,0 +1,195 @@
+# ============================================================
+# Grafana Dashboard — Cluster Overview
+# Picked up automatically by Grafana sidecar via label:
+#   grafana_dashboard: "1"
+# Shows: node count, running pods, CPU%, Memory%, restarts
+# ============================================================
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: grafana-dashboard-cluster-overview
+  namespace: monitoring
+  labels:
+    grafana_dashboard: "1"
+    app.kubernetes.io/part-of: aws-eks-devsecops-platform
+    platform-layer: observability
+data:
+  cluster-overview.json: |
+    {
+      "title": "Cluster Overview",
+      "uid": "cluster-overview",
+      "schemaVersion": 38,
+      "tags": [
+        "kubernetes",
+        "cluster"
+      ],
+      "refresh": "30s",
+      "panels": [
+        {
+          "id": 1,
+          "type": "stat",
+          "title": "Total Nodes",
+          "gridPos": {
+            "h": 4,
+            "w": 4,
+            "x": 0,
+            "y": 0
+          },
+          "targets": [
+            {
+              "expr": "count(kube_node_info)",
+              "legendFormat": "Nodes"
+            }
+          ],
+          "options": {
+            "reduceOptions": {
+              "calcs": [
+                "lastNotNull"
+              ]
+            },
+            "colorMode": "background"
+          }
+        },
+        {
+          "id": 2,
+          "type": "stat",
+          "title": "Running Pods",
+          "gridPos": {
+            "h": 4,
+            "w": 4,
+            "x": 4,
+            "y": 0
+          },
+          "targets": [
+            {
+              "expr": "count(kube_pod_status_phase{phase=\"Running\"})",
+              "legendFormat": "Pods"
+            }
+          ],
+          "options": {
+            "reduceOptions": {
+              "calcs": [
+                "lastNotNull"
+              ]
+            },
+            "colorMode": "background"
+          }
+        },
+        {
+          "id": 3,
+          "type": "stat",
+          "title": "Cluster CPU Usage %",
+          "gridPos": {
+            "h": 4,
+            "w": 4,
+            "x": 8,
+            "y": 0
+          },
+          "targets": [
+            {
+              "expr": "round(100 * (1 - avg(rate(node_cpu_seconds_total{mode=\"idle\"}[5m]))), 0.1)",
+              "legendFormat": "CPU %"
+            }
+          ],
+          "options": {
+            "reduceOptions": {
+              "calcs": [
+                "lastNotNull"
+              ]
+            },
+            "colorMode": "background",
+            "thresholds": {
+              "steps": [
+                {
+                  "color": "green",
+                  "value": 0
+                },
+                {
+                  "color": "yellow",
+                  "value": 70
+                },
+                {
+                  "color": "red",
+                  "value": 85
+                }
+              ]
+            }
+          }
+        },
+        {
+          "id": 4,
+          "type": "stat",
+          "title": "Cluster Memory Usage %",
+          "gridPos": {
+            "h": 4,
+            "w": 4,
+            "x": 12,
+            "y": 0
+          },
+          "targets": [
+            {
+              "expr": "round(100 * (1 - sum(node_memory_MemAvailable_bytes) / sum(node_memory_MemTotal_bytes)), 0.1)",
+              "legendFormat": "Memory %"
+            }
+          ],
+          "options": {
+            "reduceOptions": {
+              "calcs": [
+                "lastNotNull"
+              ]
+            },
+            "colorMode": "background",
+            "thresholds": {
+              "steps": [
+                {
+                  "color": "green",
+                  "value": 0
+                },
+                {
+                  "color": "yellow",
+                  "value": 75
+                },
+                {
+                  "color": "red",
+                  "value": 90
+                }
+              ]
+            }
+          }
+        },
+        {
+          "id": 5,
+          "type": "timeseries",
+          "title": "Pod Count by Namespace",
+          "gridPos": {
+            "h": 8,
+            "w": 12,
+            "x": 0,
+            "y": 4
+          },
+          "targets": [
+            {
+              "expr": "count by (namespace) (kube_pod_status_phase{phase=\"Running\"})",
+              "legendFormat": "{{namespace}}"
+            }
+          ]
+        },
+        {
+          "id": 6,
+          "type": "timeseries",
+          "title": "Container Restarts (last 1h)",
+          "gridPos": {
+            "h": 8,
+            "w": 12,
+            "x": 12,
+            "y": 4
+          },
+          "targets": [
+            {
+              "expr": "increase(kube_pod_container_status_restarts_total[1h]) > 0",
+              "legendFormat": "{{namespace}}/{{pod}}"
+            }
+          ]
+        }
+      ]
+    }

@@ -1,0 +1,40 @@
+# ============================================================
+# kube-prometheus-stack
+# Deploys Prometheus, Grafana, Alertmanager, Node Exporter,
+# and kube-state-metrics via a single Helm chart release.
+#
+# Also includes:
+#   - Custom Grafana dashboards (as ConfigMaps)
+#   - Custom PrometheusRule alert groups
+#   - ServiceMonitors for cluster and Online Boutique
+#
+# ArgoCD Application: observability.yaml (wave 3)
+# Destination namespace: monitoring
+# ============================================================
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: monitoring
+
+helmCharts:
+  - name: kube-prometheus-stack
+    repo: https://prometheus-community.github.io/helm-charts
+    version: 58.7.2
+    releaseName: kube-prometheus-stack
+    namespace: monitoring
+    valuesFile: values.yaml
+
+resources:
+  # Grafana dashboards — auto-loaded via sidecar (label: grafana_dashboard=1)
+  - dashboards/cluster-overview.yaml
+  - dashboards/node-metrics.yaml
+  - dashboards/application-metrics.yaml
+
+  # Custom Prometheus alert rules
+  - alerts/cpu-usage.yaml
+  - alerts/memory-usage.yaml
+  - alerts/pod-restarts.yaml
+
+  # ServiceMonitors — tells Prometheus what to scrape
+  - servicemonitors/kubernetes.yaml
+  - servicemonitors/online-boutique.yaml

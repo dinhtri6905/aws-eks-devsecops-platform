@@ -1,0 +1,54 @@
+# ============================================================
+# Alert: Node and Container Memory Usage
+# ============================================================
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: memory-usage-alerts
+  namespace: monitoring
+  labels:
+    app.kubernetes.io/part-of: aws-eks-devsecops-platform
+    platform-layer: observability
+    release: kube-prometheus-stack
+spec:
+  groups:
+    - name: memory-usage
+      interval: 60s
+      rules:
+        - alert: NodeMemoryHighWarning
+          expr: |
+            100 * (1 - node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes) > 85
+          for: 5m
+          labels:
+            severity: warning
+          annotations:
+            summary: "High memory on {{ $labels.instance }}"
+            description: >-
+              Node {{ $labels.instance }} memory is {{ printf "%.1f" $value }}%,
+              above 85% for 5 minutes.
+
+        - alert: NodeMemoryHighCritical
+          expr: |
+            100 * (1 - node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes) > 95
+          for: 5m
+          labels:
+            severity: critical
+          annotations:
+            summary: "Critical memory pressure on {{ $labels.instance }}"
+            description: >-
+              Node {{ $labels.instance }} memory is {{ printf "%.1f" $value }}%.
+              Node may start OOM-killing pods. Immediate action required.
+
+        - alert: ContainerMemoryNearLimit
+          expr: |
+            container_memory_working_set_bytes{namespace="online-boutique",container!="",container!="POD"}
+            / on(pod, container) kube_pod_container_resource_limits{namespace="online-boutique",resource="memory"} > 0.90
+          for: 5m
+          labels:
+            severity: warning
+          annotations:
+            summary: "{{ $labels.container }} near memory limit"
+            description: >-
+              Container {{ $labels.container }} in {{ $labels.pod }}
+              is using {{ printf "%.0f" $value }}% of its memory limit.
+              Risk of OOM kill if limit is not raised.

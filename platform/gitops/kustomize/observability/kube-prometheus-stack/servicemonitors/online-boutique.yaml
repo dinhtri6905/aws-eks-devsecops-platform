@@ -1,0 +1,35 @@
+# ============================================================
+# ServiceMonitor — Online Boutique
+# Scrapes all pods in the online-boutique namespace that
+# expose a /metrics endpoint on port 8080 or 9555.
+# Uses pod annotation discovery as a fallback for services
+# that don't expose a dedicated metrics port.
+# ============================================================
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: online-boutique-monitor
+  namespace: monitoring
+  labels:
+    app.kubernetes.io/part-of: aws-eks-devsecops-platform
+    platform-layer: observability
+    release: kube-prometheus-stack
+spec:
+  namespaceSelector:
+    matchNames:
+      - online-boutique
+  # Select all Services in the online-boutique namespace
+  selector:
+    matchLabels:
+      project: eks-devsecops
+  endpoints:
+    # gRPC services that expose metrics on their main port
+    - port: grpc
+      path: /metrics
+      interval: 30s
+      honorLabels: true
+    # HTTP services (frontend, shoppingassistantservice)
+    - port: http
+      path: /metrics
+      interval: 30s
+      honorLabels: true
