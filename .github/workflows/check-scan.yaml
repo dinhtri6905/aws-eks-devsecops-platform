@@ -15,9 +15,9 @@ name: Security and Compliance Scan
 # =============================================================================
 
 on:
-  schedule:
-    # Hàng ngày 2:00 AM GMT+7 = 19:00 UTC hôm trước
-    - cron: "0 19 * * *"
+  # schedule:
+  #   # Hàng ngày 2:00 AM GMT+7 = 19:00 UTC hôm trước
+  #   - cron: "0 19 * * *"
   workflow_dispatch:
     inputs:
       scan_type:

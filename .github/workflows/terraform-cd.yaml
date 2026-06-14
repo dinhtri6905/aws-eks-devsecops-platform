@@ -16,13 +16,13 @@ name: Terraform CD
 # =============================================================================
 
 on:
-  push:
-    branches:
-      - main
-    paths:
-      - "platform/infrastructure/terraform/environments/dev/**"
-      - "platform/infrastructure/terraform/modules/**"
-      - ".github/workflows/terraform-cd.yaml"
+  # push:
+  #   branches:
+  #     - main
+  #   paths:
+  #     - "platform/infrastructure/terraform/environments/dev/**"
+  #     - "platform/infrastructure/terraform/modules/**"
+  #     - ".github/workflows/terraform-cd.yaml"
   workflow_dispatch:
     inputs:
       action:

@@ -54,7 +54,7 @@ resource "helm_release" "argocd" {
   # Wait until all ArgoCD pods are running before proceeding
   timeout         = 600
   wait            = true
-  atomic          = true  # rolls back on failure
+  atomic          = true # rolls back on failure
   cleanup_on_fail = true
 
   skip_crds = false
@@ -122,7 +122,7 @@ resource "helm_release" "argocd" {
         replicas = 1
         resources = {
           requests = { cpu = "250m", memory = "512Mi" }
-          limits   = { cpu = "1",    memory = "1Gi"   }
+          limits   = { cpu = "1", memory = "1Gi" }
         }
       }
 
@@ -256,9 +256,9 @@ resource "helm_release" "argocd_root_app" {
             }
 
             syncOptions = [
-              "CreateNamespace=true",       # auto-create namespaces for child apps
+              "CreateNamespace=true", # auto-create namespaces for child apps
               "PrunePropagationPolicy=foreground",
-              "PruneLast=true",             # prune only after all resources are healthy
+              "PruneLast=true", # prune only after all resources are healthy
               "ServerSideApply=true",
             ]
 

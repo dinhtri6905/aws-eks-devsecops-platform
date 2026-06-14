@@ -16,6 +16,12 @@ kind: Kustomization
 
 namespace: gatekeeper-system
 
+# ArgoCD syncs this as part of the security Application (sync-wave: "2").
+# Resources within are ordered by their own sync-wave annotations:
+#   wave 0 — Gatekeeper Helm chart (via HelmChartInflationGenerator or pre-rendered)
+#   wave 1 — ConstraintTemplates  (register custom CRDs)
+#   wave 2 — Constraints          (apply policies against registered CRDs)
+
 resources:
   # ConstraintTemplates (CRDs)
   - templates/k8sdisallowprivileged.yaml
