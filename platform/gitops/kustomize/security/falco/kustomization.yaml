@@ -1,0 +1,20 @@
+# ============================================================
+# falco
+# Runtime threat detection via eBPF. Deployed as a DaemonSet
+# across all worker nodes. Custom rules tailored to the Online
+# Boutique workloads are defined in values.yaml
+# (falco.customRules), kept in sync with
+# platform/security/falco/rules/custom-rules.yaml.
+# ============================================================
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: falco
+
+helmCharts:
+  - name: falco
+    repo: https://falcosecurity.github.io/charts
+    version: 4.7.4
+    releaseName: falco
+    namespace: falco
+    valuesFile: values.yaml
