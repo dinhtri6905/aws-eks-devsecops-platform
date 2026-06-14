@@ -1,0 +1,51 @@
+# .dockerignore for Python services
+# Place in: src/emailservice/, src/recommendationservice/,
+#           src/loadgenerator/, src/shoppingassistantservice/
+
+# Virtual environments — pip install runs inside Docker
+.venv/
+venv/
+env/
+ENV/
+
+# Byte-compiled cache
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*$py.class
+
+# Distribution / packaging
+*.egg-info/
+*.egg
+dist/
+build/
+.eggs/
+
+# Test artifacts
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
+nosetests.xml
+coverage.xml
+
+# Type checking
+.mypy_cache/
+.dmypy.json
+
+# Jupyter (loadgenerator dev notebooks)
+.ipynb_checkpoints/
+*.ipynb
+
+# IDE
+.vscode/
+.idea/
+*.swp
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Note: requirements.txt MUST be included (pip install -r requirements.txt)
+# Note: genproto.sh output (*_pb2.py, *_pb2_grpc.py) MUST be included

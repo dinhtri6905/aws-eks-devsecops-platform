@@ -1,0 +1,110 @@
+# ==============================================================
+# ROOT .dockerignore
+# ==============================================================
+# Place this at repo root. Each service's Dockerfile context is
+# its own src/<service>/ directory, so Docker only sends that
+# subtree to the daemon — but this file prevents accidental
+# inclusion of heavy or sensitive files if context is repo root.
+#
+# For per-service .dockerignore files, see:
+#   microservices-application/online-boutique/src/<service>/.dockerignore
+# ==============================================================
+
+# ==============================================================
+# NEVER SEND TO DOCKER DAEMON
+# ==============================================================
+
+# Git history — not needed in image (~50MB+)
+.git/
+.gitignore
+
+# Terraform — providers can be 500MB+
+**/.terraform/
+*.tfstate
+*.tfstate.*
+*.tfplan
+*.tfvars
+
+# All other service source trees — only the target service matters
+# (relevant when building from repo root with --file flag)
+microservices-application/
+
+# Platform manifests — not needed in application images
+platform/
+
+# CI/CD configs
+.github/
+
+# ==============================================================
+# SECRETS & CREDENTIALS
+# ==============================================================
+
+.env
+.env.*
+.aws/
+*.pem
+*.key
+*.p12
+*.pfx
+kubeconfig
+*.kubeconfig
+
+# ==============================================================
+# BUILD ARTIFACTS (Go, Java, .NET, Node)
+# ==============================================================
+
+# Go
+**/bin/
+coverage.out
+
+# Java / Gradle
+.gradle/
+**/build/
+**/*.class
+**/*.jar
+!gradle/wrapper/gradle-wrapper.jar   # keep wrapper jar
+
+# .NET
+**/obj/
+**/bin/
+**/publish/
+TestResults/
+
+# Node
+node_modules/
+.npm/
+npm-debug.log*
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+*.egg-info/
+.pytest_cache/
+
+# ==============================================================
+# TEST & SCAN OUTPUT
+# ==============================================================
+
+*.sarif
+trivy-*.json
+trivy-*.sarif
+gitleaks-report.*
+*.out
+coverage.html
+htmlcov/
+TestResults/
+
+# ==============================================================
+# IDE & OS
+# ==============================================================
+
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+*.swp
+tmp/
+temp/
+*.log
