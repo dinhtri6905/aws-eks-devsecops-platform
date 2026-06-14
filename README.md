@@ -715,7 +715,7 @@ See [ADR-008](#adr-008-bluegreen-deployment-strategy-via-argo-rollouts) for the 
       autoPromotionEnabled: true
       autoPromotionSeconds: 60            # wait 60s after green is Ready → promote
       scaleDownDelaySeconds: 30           # keep blue alive 30s post-promotion → instant rollback window
-```
+
 
 Two Services are required per service: `<name>-active` (production) and `<name>-preview` (green stack, no traffic). After `autoPromotionSeconds`, Argo Rollouts patches the active Service selector — all traffic switches to green in a single atomic operation. Rollback: `kubectl argo rollouts undo <name> -n online-boutique`.
 
