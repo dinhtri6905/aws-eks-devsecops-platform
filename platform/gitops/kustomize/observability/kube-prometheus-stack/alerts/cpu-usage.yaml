@@ -1,0 +1,53 @@
+# ============================================================
+# Alert: Node and Container CPU Usage
+# ============================================================
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: cpu-usage-alerts
+  namespace: monitoring
+  labels:
+    app.kubernetes.io/part-of: aws-eks-devsecops-platform
+    platform-layer: observability
+    release: kube-prometheus-stack
+spec:
+  groups:
+    - name: cpu-usage
+      interval: 60s
+      rules:
+        - alert: NodeCPUHighWarning
+          expr: |
+            100 * (1 - avg by (instance) (rate(node_cpu_seconds_total{mode="idle"}[5m]))) > 80
+          for: 5m
+          labels:
+            severity: warning
+          annotations:
+            summary: "High CPU on {{ $labels.instance }}"
+            description: >-
+              Node {{ $labels.instance }} CPU is {{ printf "%.1f" $value }}%,
+              above 80% for 5 minutes.
+
+        - alert: NodeCPUHighCritical
+          expr: |
+            100 * (1 - avg by (instance) (rate(node_cpu_seconds_total{mode="idle"}[5m]))) > 90
+          for: 5m
+          labels:
+            severity: critical
+          annotations:
+            summary: "Critical CPU on {{ $labels.instance }}"
+            description: >-
+              Node {{ $labels.instance }} CPU is {{ printf "%.1f" $value }}%,
+              above 90% for 5 minutes. Immediate action required.
+
+        - alert: ContainerCPUThrottling
+          expr: |
+            rate(container_cpu_throttled_seconds_total{namespace="online-boutique",container!=""}[5m])
+            / rate(container_cpu_usage_seconds_total{namespace="online-boutique",container!=""}[5m]) > 0.25
+          for: 10m
+          labels:
+            severity: warning
+          annotations:
+            summary: "CPU throttling on {{ $labels.container }}"
+            description: >-
+              Container {{ $labels.container }} in {{ $labels.pod }}
+              throttled > 25% for 10 minutes. Consider raising CPU limit.

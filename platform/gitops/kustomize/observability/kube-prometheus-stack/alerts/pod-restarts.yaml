@@ -1,0 +1,54 @@
+# ============================================================
+# Alert: Pod Restarts and Readiness
+# ============================================================
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: pod-restart-alerts
+  namespace: monitoring
+  labels:
+    app.kubernetes.io/part-of: aws-eks-devsecops-platform
+    platform-layer: observability
+    release: kube-prometheus-stack
+spec:
+  groups:
+    - name: pod-restarts
+      interval: 60s
+      rules:
+        - alert: PodCrashLooping
+          expr: |
+            increase(kube_pod_container_status_restarts_total{namespace="online-boutique"}[1h]) > 5
+          for: 0m
+          labels:
+            severity: warning
+          annotations:
+            summary: "{{ $labels.pod }} is crash looping"
+            description: >-
+              Pod {{ $labels.pod }} / container {{ $labels.container }}
+              has restarted {{ printf "%.0f" $value }} times in the last hour.
+
+        - alert: PodCrashLoopingCritical
+          expr: |
+            increase(kube_pod_container_status_restarts_total{namespace="online-boutique"}[1h]) > 15
+          for: 0m
+          labels:
+            severity: critical
+          annotations:
+            summary: "{{ $labels.pod }} critically crash looping"
+            description: >-
+              Pod {{ $labels.pod }} / container {{ $labels.container }}
+              has restarted {{ printf "%.0f" $value }} times in the last hour.
+              Service is likely unavailable.
+
+        - alert: PodNotReady
+          expr: |
+            kube_pod_status_ready{namespace="online-boutique",condition="true"} == 0
+          for: 5m
+          labels:
+            severity: warning
+          annotations:
+            summary: "{{ $labels.pod }} is not ready"
+            description: >-
+              Pod {{ $labels.pod }} in {{ $labels.namespace }}
+              has not been ready for 5 minutes.
+              Run: kubectl describe pod {{ $labels.pod }} -n {{ $labels.namespace }}

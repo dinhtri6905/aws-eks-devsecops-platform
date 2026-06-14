@@ -1,0 +1,100 @@
+# ============================================================
+# Grafana Dashboard — Node Metrics
+# Shows per-node: CPU%, Memory%, Disk%, Network Rx/Tx
+# Source: node-exporter (runs as DaemonSet on every node)
+# ============================================================
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: grafana-dashboard-node-metrics
+  namespace: monitoring
+  labels:
+    grafana_dashboard: "1"
+    app.kubernetes.io/part-of: aws-eks-devsecops-platform
+    platform-layer: observability
+data:
+  node-metrics.json: |
+    {
+      "title": "Node Metrics",
+      "uid": "node-metrics",
+      "schemaVersion": 38,
+      "tags": [
+        "kubernetes",
+        "nodes"
+      ],
+      "refresh": "30s",
+      "panels": [
+        {
+          "id": 1,
+          "type": "timeseries",
+          "title": "Node CPU Usage % by Node",
+          "gridPos": {
+            "h": 8,
+            "w": 12,
+            "x": 0,
+            "y": 0
+          },
+          "targets": [
+            {
+              "expr": "100 * (1 - avg by (instance) (rate(node_cpu_seconds_total{mode=\"idle\"}[5m])))",
+              "legendFormat": "{{instance}}"
+            }
+          ]
+        },
+        {
+          "id": 2,
+          "type": "timeseries",
+          "title": "Node Memory Usage % by Node",
+          "gridPos": {
+            "h": 8,
+            "w": 12,
+            "x": 12,
+            "y": 0
+          },
+          "targets": [
+            {
+              "expr": "100 * (1 - node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes)",
+              "legendFormat": "{{instance}}"
+            }
+          ]
+        },
+        {
+          "id": 3,
+          "type": "timeseries",
+          "title": "Node Disk Usage % by Device",
+          "gridPos": {
+            "h": 8,
+            "w": 12,
+            "x": 0,
+            "y": 8
+          },
+          "targets": [
+            {
+              "expr": "100 * (1 - node_filesystem_avail_bytes{fstype!=\"tmpfs\"} / node_filesystem_size_bytes{fstype!=\"tmpfs\"})",
+              "legendFormat": "{{instance}} \u2014 {{mountpoint}}"
+            }
+          ]
+        },
+        {
+          "id": 4,
+          "type": "timeseries",
+          "title": "Node Network Rx/Tx (bytes/s)",
+          "gridPos": {
+            "h": 8,
+            "w": 12,
+            "x": 12,
+            "y": 8
+          },
+          "targets": [
+            {
+              "expr": "rate(node_network_receive_bytes_total{device!~\"lo|veth.*\"}[5m])",
+              "legendFormat": "rx {{instance}} {{device}}"
+            },
+            {
+              "expr": "rate(node_network_transmit_bytes_total{device!~\"lo|veth.*\"}[5m])",
+              "legendFormat": "tx {{instance}} {{device}}"
+            }
+          ]
+        }
+      ]
+    }
