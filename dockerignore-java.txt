@@ -1,0 +1,40 @@
+# .dockerignore for Java/Gradle services
+# Place in: src/adservice/
+
+# Gradle build output — can be 200MB+
+build/
+.gradle/
+out/
+
+# Compiled classes
+**/*.class
+
+# Gradle cache (local)
+.gradle/
+
+# IDE project files
+.idea/
+*.iml
+*.ipr
+*.iws
+.classpath
+.project
+.settings/
+*.eclipse
+
+# VS Code
+.vscode/
+
+# OS
+.DS_Store
+Thumbs.db
+*.swp
+
+# Test results
+TEST-*.xml
+test-results/
+
+# Note: gradle/wrapper/gradle-wrapper.jar MUST be included
+# Note: gradlew and gradlew.bat MUST be included
+# Note: build.gradle and settings.gradle MUST be included
+# Note: src/ MUST be included
