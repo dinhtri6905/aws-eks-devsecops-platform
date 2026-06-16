@@ -3,6 +3,8 @@ kind: ConstraintTemplate
 metadata:
   name: k8sallowedrepos
   annotations:
+    argocd.argoproj.io/sync-wave: "1"
+  annotations:
     description: >-
       Restricts container images to a set of allowed registry
       prefixes (e.g. the project's Amazon ECR registry), to

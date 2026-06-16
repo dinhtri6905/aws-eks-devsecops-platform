@@ -3,6 +3,8 @@ kind: ConstraintTemplate
 metadata:
   name: k8srequiredresources
   annotations:
+    argocd.argoproj.io/sync-wave: "1"
+  annotations:
     description: >-
       Requires all containers to define CPU/memory requests
       and limits, preventing noisy-neighbor and resource

@@ -2,6 +2,8 @@ apiVersion: constraints.gatekeeper.sh/v1beta1
 kind: K8sAllowedRepos
 metadata:
   name: allow-ecr-and-trusted-registries-only
+  annotations:
+    argocd.argoproj.io/sync-wave: "2"
 spec:
   match:
     kinds:
@@ -17,8 +19,8 @@ spec:
     repos:
       # Replace <ACCOUNT_ID> with the AWS account ID running the
       # ECR registry created by the `ecr` Terraform module.
-      - "<ACCOUNT_ID>.dkr.ecr.ap-southeast-1.amazonaws.com/aws-eks-devsecops-dev/"
-      - "<ACCOUNT_ID>.dkr.ecr.ap-southeast-1.amazonaws.com/aws-eks-devsecops-prod/"
+      - "041659741748.dkr.ecr.ap-southeast-1.amazonaws.com/aws-eks-devsecops-dev/"
+      - "041659741748.dkr.ecr.ap-southeast-1.amazonaws.com/aws-eks-devsecops-prod/"
       # Trusted public registries used by platform add-ons
       - "registry.k8s.io/"
       - "quay.io/jetstack/"
