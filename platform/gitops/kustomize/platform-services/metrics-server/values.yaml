@@ -56,4 +56,4 @@ serviceMonitor:
 defaultArgs:
   - --cert-dir=/tmp
   - --secure-port=10250
-  - --metric-resolution=15s
+  # - --metric-resolution=15s

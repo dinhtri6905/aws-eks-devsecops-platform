@@ -13,6 +13,11 @@ clusterName: eks-devsecops-dev-cluster
 
 region: ap-southeast-1
 vpcId: "" # filled by overlay patch from terraform output `vpc_id`, or set explicitly
+# Terraform chịu trách nhiệm tạo VPC/EKS và export các thông tin hạ tầng như vpc_id, region, cluster_name thông qua output.
+# Không hardcode vpcId trong GitOps base (values.yaml để trống).
+# Sau khi Terraform hoàn tất, CI/CD pipeline sẽ lấy output từ Terraform và inject vào environment overlay (overlays/dev|prod).
+# ArgoCD chỉ theo dõi GitOps repository và deploy cấu hình đã được cập nhật.
+# Giữ đúng nguyên tắc GitOps: Git là source of truth, Terraform chỉ quản lý infrastructure, ArgoCD quản lý Kubernetes workload.
 
 replicaCount: 1
 
@@ -24,7 +29,7 @@ serviceAccount:
   create: true
   name: aws-load-balancer-controller
   annotations:
-    eks.amazonaws.com/role-arn: "arn:aws:iam::<ACCOUNT_ID>:role/eks-devsecops-dev-alb-controller-role"
+    eks.amazonaws.com/role-arn: "arn:aws:iam::041659741748:role/eks-devsecops-dev-alb-controller-role"
 
 # Disable the controller's own webhook cert auto-generation
 # only if cert-manager is used instead. Default (true) is fine

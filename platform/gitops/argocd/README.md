@@ -1,3 +1,11 @@
+AppProject (platform.yaml)
+    └── Root Application (root-app.yaml)
+              └── watches: argocd/applications/
+                        ├── Child App: platform-services
+                        ├── Child App: security
+                        ├── Child App: observability
+                        └── Child App: online-boutique
+
 ```bash
 platform/
 └── gitops/
