@@ -3,6 +3,8 @@ kind: ConstraintTemplate
 metadata:
   name: k8sreadonlyrootfs
   annotations:
+    argocd.argoproj.io/sync-wave: "1"
+  annotations:
     description: >-
       Requires containers to set
       securityContext.readOnlyRootFilesystem: true to reduce

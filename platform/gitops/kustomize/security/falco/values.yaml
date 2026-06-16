@@ -66,11 +66,20 @@ customRules:
     - list: boutique_namespaces
       items: [online-boutique, online-boutique-dev, online-boutique-prod]
 
-    - list: allowed_boutique_images
+    - list: allowed_boutique_containers
       items: [
-        frontend, cartservice, productcatalogservice, currencyservice,
-        paymentservice, shippingservice, emailservice, checkoutservice,
-        recommendationservice, adservice, loadgenerator
+        frontend,
+        cartservice,
+        productcatalogservice,
+        currencyservice,
+        paymentservice,
+        shippingservice,
+        emailservice,
+        checkoutservice,
+        recommendationservice,
+        adservice,
+        loadgenerator,
+        shoppingassistantservice
       ]
 
     - list: shell_binaries
@@ -170,23 +179,26 @@ customRules:
       priority: CRITICAL
       tags: [container, filesystem, mitre_persistence]
 
-    - rule: Unexpected Image Running in Boutique Namespace
+    - rule: Unexpected Container Running in Boutique Namespace
       desc: >
-        Detects a container running in an Online Boutique
-        namespace whose image is not part of the known set of
-        microservices.
+        Detects execution activity from a container running in an
+        Online Boutique namespace whose container name is not part
+        of the approved microservice set.
+
       condition: >
         spawned_process
         and container
         and in_boutique_namespace
-        and container.image.repository exists
-        and not (split(container.image.repository, "/")[1] in (allowed_boutique_images))
+        and not container.name in (allowed_boutique_containers)
+
       output: >
-        Unexpected container image running in Online Boutique namespace
-        (image=%container.image.repository container=%container.name
+        Unexpected container detected in Online Boutique namespace
+        (container=%container.name image=%container.image.repository
         namespace=%k8s.ns.name pod=%k8s.pod.name)
+
       priority: WARNING
-      tags: [container, image, mitre_initial_access]
+
+      tags: [container, anomaly_detection, mitre_initial_access]
 
     - rule: Setuid or Setgid Bit Set in Container
       desc: >

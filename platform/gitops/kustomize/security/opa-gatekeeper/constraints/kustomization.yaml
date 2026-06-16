@@ -1,16 +1,19 @@
-apiVersion: kustomize.config.k8s.io/v1beta1
-kind: Kustomization
+# apiVersion: kustomize.config.k8s.io/v1beta1
+# kind: Kustomization
 
-# Constraints reference CRDs registered by ConstraintTemplates (wave 1).
-# Each file below carries: argocd.argoproj.io/sync-wave: "2"
-# If a Constraint is applied before its ConstraintTemplate CRD exists,
-# Kubernetes will reject it with "no kind is registered for the type".
+# # Constraints reference CRDs registered by ConstraintTemplates (wave 1).
+# # Each file below carries: argocd.argoproj.io/sync-wave: "2"
+# # If a Constraint is applied before its ConstraintTemplate CRD exists,
+# # Kubernetes will reject it with "no kind is registered for the type".
 
-resources:
-  - allow-ecr-and-trusted-registries-only.yaml
-  - disallow-latest-tag.yaml
-  - disallow-privileged.yaml
-  - require-labels.yaml
-  - require-non-root.yaml
-  - require-read-only-root-filesystem.yaml
-  - require-resource-limits.yaml
+# resources:
+#   - allow-ecr-and-trusted-registries-only.yaml
+#   - disallow-latest-tag.yaml
+#   - disallow-privileged.yaml
+#   - require-labels.yaml
+#   - require-non-root.yaml
+#   - require-read-only-root-filesystem.yaml
+#   - require-resource-limits.yaml
+
+
+### This is unnecessary because the root list will read each file directly. ###

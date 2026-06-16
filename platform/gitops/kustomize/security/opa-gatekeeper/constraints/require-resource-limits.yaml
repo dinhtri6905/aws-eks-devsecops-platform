@@ -2,6 +2,8 @@ apiVersion: constraints.gatekeeper.sh/v1beta1
 kind: K8sRequiredResources
 metadata:
   name: require-resource-requests-limits
+  annotations:
+    argocd.argoproj.io/sync-wave: "2"
 spec:
   match:
     kinds:
