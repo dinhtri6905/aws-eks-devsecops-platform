@@ -31,6 +31,7 @@ spec:
     syncOptions:
       - CreateNamespace=true
       - ApplyOutOfSyncOnly=true
+      - ServerSideApply=true 
       - PrunePropagationPolicy=foreground
     retry:
       limit: 5
