@@ -17,11 +17,12 @@ spec:
     repoURL: https://github.com/dinhtri6905/aws-eks-devsecops-platform.git
     targetRevision: main
     path: platform/gitops/kustomize/security
-    # Deploys OPA Gatekeeper (with ConstraintTemplates/Constraints) and Falco (runtime threat detection)
-    kustomize:
-      components:
-        - opa-gatekeeper
-        - falco
+    # Deploys OPA Gatekeeper (with ConstraintTemplates/Constraints) and Falco (runtime threat detection) 
+    # components: trong ArgoCD Kustomize source dùng để reference Kustomize Component (một loại resource đặc biệt với kind: Component). Nhưng opa-gatekeeper và falco trong project là các folder thông thường với kind: Kustomization — không phải Component.
+    # kustomize:
+    #   components:
+    #     - opa-gatekeeper
+    #     - falco
         
   destination:
     server: https://kubernetes.default.svc

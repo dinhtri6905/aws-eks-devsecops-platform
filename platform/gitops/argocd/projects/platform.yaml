@@ -23,6 +23,10 @@ spec:
       server: https://kubernetes.default.svc
     - namespace: security
       server: https://kubernetes.default.svc
+    - namespace: gatekeeper-system
+      server: https://kubernetes.default.svc
+    - namespace: falco   
+      server: https://kubernetes.default.svc
     - namespace: online-boutique
       server: https://kubernetes.default.svc
 
