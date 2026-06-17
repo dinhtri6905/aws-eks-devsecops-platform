@@ -18,10 +18,15 @@ spec:
   namespaceSelector:
     matchNames:
       - online-boutique
-  # Select all Services in the online-boutique namespace
+  # Select all Services in the online-boutique namespace.
+  # Online Boutique uses the `app: <service-name>` label (no `project` label), 
+  # so an empty selector is used to match everything.
   selector:
-    matchLabels:
-      project: eks-devsecops
+    matchLabels: {}
+  # Select all Services in the online-boutique namespace
+  # selector:
+  #   matchLabels:
+  #     project: eks-devsecops
   endpoints:
     # gRPC services that expose metrics on their main port
     - port: grpc

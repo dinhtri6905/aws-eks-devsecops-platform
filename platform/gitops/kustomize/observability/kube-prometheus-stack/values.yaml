@@ -13,6 +13,7 @@ fullnameOverride: prometheus
 # ============================================================
 # PROMETHEUS
 # ============================================================
+# http://prometheus-operated:9090
 prometheus:
   prometheusSpec:
     # Keep 7 days of metrics locally — enough for dev debugging
