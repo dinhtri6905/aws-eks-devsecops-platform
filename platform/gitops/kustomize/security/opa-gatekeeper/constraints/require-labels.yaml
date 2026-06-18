@@ -17,3 +17,28 @@ spec:
         allowedRegex: "^[a-z0-9-]+$"
       - key: "app.kubernetes.io/part-of"
         allowedRegex: "^aws-eks-devsecops-platform$"
+
+# apiVersion: constraints.gatekeeper.sh/v1beta1
+# kind: K8sRequiredLabels
+# metadata:
+#   name: require-app-labels
+#   annotations:
+#     argocd.argoproj.io/sync-wave: "2"
+#     description: >-
+#       Requires the 'app' label on all Pods in the
+#       online-boutique namespace. This matches the label
+#       used in Online Boutique Deployment manifests
+#       (app: frontend, app: cartservice, etc.).
+#       Change to app.kubernetes.io/name once manifests
+#       are updated to use the recommended label schema.
+# spec:
+#   match:
+#     kinds:
+#       - apiGroups: [""]
+#         kinds: ["Pod"]
+#     namespaces:
+#       - online-boutique
+#   parameters:
+#     labels:
+#       - key: "app"
+#         allowedRegex: "^[a-z0-9-]+$"

@@ -1,0 +1,313 @@
+# ============================================================
+# Falco Custom Rules — Online Boutique
+# Loaded as a ConfigMap and mounted into every Falco pod at:
+#   /etc/falco/custom-rules/custom-rules.yaml
+#
+# Falco hot-reloads rules via inotify when this ConfigMap
+# changes — no pod restart or Helm upgrade required.
+#
+# Rule priority guide:
+#   CRITICAL  — active attack / immediate response needed
+#   WARNING   — suspicious behavior / investigate soon
+#   NOTICE    — anomaly / low-urgency signal
+# ============================================================
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: falco-custom-rules
+  namespace: falco
+  labels:
+    app.kubernetes.io/part-of: aws-eks-devsecops-platform
+    platform-layer: security
+  annotations:
+    argocd.argoproj.io/sync-wave: "1"
+data:
+  custom-rules.yaml: |
+    # ----------------------------------------------------------
+    # LISTS
+    # ----------------------------------------------------------
+    - list: boutique_namespaces
+      items: [online-boutique]
+
+    - list: allowed_boutique_containers
+      items:
+        - frontend
+        - cartservice
+        - productcatalogservice
+        - currencyservice
+        - paymentservice
+        - shippingservice
+        - emailservice
+        - checkoutservice
+        - recommendationservice
+        - adservice
+        - loadgenerator
+        - shoppingassistantservice
+        - redis
+
+    - list: shell_binaries
+      items: [bash, sh, zsh, csh, ksh, dash, fish]
+
+    - list: package_managers
+      items: [apt, apt-get, apk, yum, dnf, pip, pip3, npm, yarn]
+
+    - list: boutique_allowed_ports
+      items: [53, 443, 3550, 5000, 5432, 6379, 7000, 7070, 8080, 9555, 9090, 50051]
+
+    # ----------------------------------------------------------
+    # MACROS
+    # ----------------------------------------------------------
+    - macro: in_boutique_namespace
+      condition: (k8s.ns.name in (boutique_namespaces))
+
+    - macro: spawned_process
+      condition: (evt.type = execve and evt.dir = <)
+
+    - macro: container
+      condition: (container.id != host)
+
+    # ----------------------------------------------------------
+    # RULE: Shell Spawned in Container
+    # Attacker or compromised process opens an interactive shell
+    # inside a microservice container.
+    # MITRE: Execution — T1059
+    # ----------------------------------------------------------
+    - rule: Shell Spawned in Online Boutique Container
+      desc: >
+        Detects an interactive shell being spawned inside any
+        Online Boutique microservice container.
+      condition: >
+        spawned_process
+        and container
+        and in_boutique_namespace
+        and proc.name in (shell_binaries)
+        and not proc.pname in (shell_binaries)
+      output: >
+        Shell spawned inside microservice container
+        (user=%user.name container=%container.name
+        image=%container.image.repository
+        command=%proc.cmdline parent=%proc.pname
+        namespace=%k8s.ns.name pod=%k8s.pod.name)
+      priority: CRITICAL
+      tags: [container, shell, mitre_execution, T1059]
+
+    # ----------------------------------------------------------
+    # RULE: Package Manager Executed
+    # Containers should be immutable — installing packages at
+    # runtime is a persistence or supply-chain attack signal.
+    # MITRE: Persistence — T1546
+    # ----------------------------------------------------------
+    - rule: Package Manager Execution in Container
+      desc: >
+        Detects execution of package managers inside a running
+        container. Application containers should be immutable.
+      condition: >
+        spawned_process
+        and container
+        and in_boutique_namespace
+        and proc.name in (package_managers)
+      output: >
+        Package manager executed inside running container
+        (user=%user.name command=%proc.cmdline
+        container=%container.name
+        image=%container.image.repository
+        namespace=%k8s.ns.name pod=%k8s.pod.name)
+      priority: WARNING
+      tags: [container, package_management, mitre_persistence, T1546]
+
+    # ----------------------------------------------------------
+    # RULE: Sensitive File Read
+    # Attempts to read kubeconfig, cloud credentials, or
+    # /etc/shadow — credential access patterns.
+    # MITRE: Credential Access — T1552
+    # ----------------------------------------------------------
+    - rule: Sensitive File Read in Container
+      desc: >
+        Detects attempts to read sensitive files from within
+        a microservice container.
+      condition: >
+        open_read
+        and container
+        and in_boutique_namespace
+        and (fd.name startswith /root/.kube
+             or fd.name startswith /root/.aws
+             or fd.name startswith /var/run/secrets/eks.amazonaws.com
+             or fd.name = /etc/shadow
+             or fd.name = /etc/sudoers)
+      output: >
+        Sensitive file opened for reading inside container
+        (user=%user.name file=%fd.name
+        container=%container.name
+        image=%container.image.repository
+        namespace=%k8s.ns.name pod=%k8s.pod.name)
+      priority: CRITICAL
+      tags: [container, filesystem, mitre_credential_access, T1552]
+
+    # ----------------------------------------------------------
+    # RULE: Unexpected Outbound Connection
+    # Any outbound connection on a port not in the approved
+    # service-to-service list may indicate C2 or data exfil.
+    # MITRE: Exfiltration — T1048
+    # ----------------------------------------------------------
+    - rule: Unexpected Outbound Connection from Microservice
+      desc: >
+        Detects outbound network connections from an Online
+        Boutique microservice to a non-standard port.
+      condition: >
+        outbound
+        and container
+        and in_boutique_namespace
+        and not fd.sport in (boutique_allowed_ports)
+      output: >
+        Unexpected outbound connection from microservice
+        (command=%proc.cmdline connection=%fd.name
+        container=%container.name
+        image=%container.image.repository
+        namespace=%k8s.ns.name pod=%k8s.pod.name)
+      priority: NOTICE
+      tags: [network, mitre_exfiltration, T1048]
+
+    # ----------------------------------------------------------
+    # RULE: Write Below Binary Directory
+    # Writing to /bin, /sbin, /usr/bin indicates an attacker
+    # trying to replace binaries for persistence.
+    # MITRE: Persistence — T1574
+    # ----------------------------------------------------------
+    - rule: Write Below Binary Directory in Container
+      desc: >
+        Detects a file being written under /bin, /sbin,
+        /usr/bin or /usr/sbin inside a running container.
+      condition: >
+        open_write
+        and container
+        and in_boutique_namespace
+        and fd.directory in (/bin, /sbin, /usr/bin, /usr/sbin, /usr/local/bin)
+      output: >
+        File written below binary directory in container
+        (user=%user.name file=%fd.name
+        container=%container.name
+        image=%container.image.repository
+        namespace=%k8s.ns.name pod=%k8s.pod.name)
+      priority: CRITICAL
+      tags: [container, filesystem, mitre_persistence, T1574]
+
+    # ----------------------------------------------------------
+    # RULE: Unexpected Container in Namespace
+    # A container whose name is not in the approved set may be
+    # an attacker-spawned sidecar or debug pod.
+    # MITRE: Initial Access — T1190
+    # ----------------------------------------------------------
+    - rule: Unexpected Container Running in Boutique Namespace
+      desc: >
+        Detects execution activity from a container running in
+        the Online Boutique namespace whose name is not part of
+        the approved microservice set.
+      condition: >
+        spawned_process
+        and container
+        and in_boutique_namespace
+        and not container.name in (allowed_boutique_containers)
+      output: >
+        Unexpected container detected in Online Boutique namespace
+        (container=%container.name
+        image=%container.image.repository
+        namespace=%k8s.ns.name pod=%k8s.pod.name)
+      priority: WARNING
+      tags: [container, anomaly_detection, mitre_initial_access, T1190]
+
+    # ----------------------------------------------------------
+    # RULE: Setuid / Setgid Bit Set
+    # Setting SUID/SGID allows programs to run with elevated
+    # privileges — classic privilege escalation technique.
+    # MITRE: Privilege Escalation — T1548
+    # ----------------------------------------------------------
+    - rule: Setuid or Setgid Bit Set in Container
+      desc: >
+        Detects the setuid or setgid bit being set on a file
+        inside a container.
+      condition: >
+        (evt.type in (chmod, fchmod) and evt.dir = >)
+        and container
+        and in_boutique_namespace
+        and (evt.arg.mode contains "S_ISUID"
+             or evt.arg.mode contains "S_ISGID")
+      output: >
+        Setuid/setgid bit set on file inside container
+        (user=%user.name file=%evt.arg.filename
+        mode=%evt.arg.mode container=%container.name
+        image=%container.image.repository
+        namespace=%k8s.ns.name pod=%k8s.pod.name)
+      priority: CRITICAL
+      tags: [container, privilege_escalation, mitre_privilege_escalation, T1548]
+
+    # ----------------------------------------------------------
+    # RULE: Cryptomining Process
+    # Known miner binary names — resource hijacking.
+    # MITRE: Impact — T1496
+    # ----------------------------------------------------------
+    - rule: Possible Cryptomining Process Detected
+      desc: >
+        Detects process names commonly associated with
+        cryptocurrency mining tools inside a container.
+      condition: >
+        spawned_process
+        and container
+        and in_boutique_namespace
+        and proc.name in (xmrig, minerd, ethminer, cpuminer,
+                          cgminer, t-rex, nbminer)
+      output: >
+        Possible cryptomining process detected in container
+        (command=%proc.cmdline container=%container.name
+        image=%container.image.repository
+        namespace=%k8s.ns.name pod=%k8s.pod.name)
+      priority: CRITICAL
+      tags: [container, cryptomining, mitre_impact, T1496]
+
+    # ----------------------------------------------------------
+    # RULE: Service Account Token Write
+    # Writing to the mounted SA token is a credential theft
+    # attempt against the Kubernetes API.
+    # MITRE: Credential Access — T1528
+    # ----------------------------------------------------------
+    - rule: Service Account Token Modification
+      desc: >
+        Detects write access to the mounted Kubernetes service
+        account token inside a container.
+      condition: >
+        open_write
+        and container
+        and in_boutique_namespace
+        and fd.name startswith /var/run/secrets/kubernetes.io/serviceaccount
+      output: >
+        Write to mounted service account token detected
+        (user=%user.name file=%fd.name
+        container=%container.name
+        image=%container.image.repository
+        namespace=%k8s.ns.name pod=%k8s.pod.name)
+      priority: CRITICAL
+      tags: [container, k8s, mitre_credential_access, T1528]
+
+    # ----------------------------------------------------------
+    # RULE: Drift Detection — New Binary Executed
+    # Running a binary written after container start means the
+    # container filesystem was mutated at runtime (drift).
+    # MITRE: Persistence — T1543
+    # ----------------------------------------------------------
+    - rule: Drift - New Binary Executed in Container
+      desc: >
+        Detects execution of a binary that was written to the
+        container filesystem after the container started.
+      condition: >
+        spawned_process
+        and container
+        and in_boutique_namespace
+        and evt.type = execve
+        and proc.is_exe_writable = true
+      output: >
+        Newly written executable run inside container
+        (command=%proc.cmdline exe=%proc.exepath
+        container=%container.name
+        image=%container.image.repository
+        namespace=%k8s.ns.name pod=%k8s.pod.name)
+      priority: WARNING
+      tags: [container, drift, mitre_persistence, T1543]
