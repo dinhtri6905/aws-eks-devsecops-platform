@@ -1,6 +1,10 @@
 # Cloud-Native Secure GitOps Platform on AWS EKS
 
-A production-inspired **DevSecOps platform** on Amazon EKS that embeds security at every layer of the software delivery lifecycle — from infrastructure policy gates to runtime threat detection. The platform uses **Online Boutique** (Google's open-source microservices demo — 11 services across Go, Python, Node.js, Java, and C#) as its demonstration workload, deployed and managed entirely through GitOps.
+A cloud-native DevSecOps platform built on AWS EKS to demonstrate secure, automated, and scalable application delivery through GitOps principles.
+
+The project uses Online Boutique, a microservices-based e-commerce application consisting of 12 services, as the demonstration workload. Rather than focusing solely on application deployment, the project aims to establish a complete platform that integrates infrastructure automation, continuous delivery, policy enforcement, runtime security, and observability within a unified operational workflow.
+
+By combining Infrastructure as Code, GitOps practices, automated security controls, and centralized monitoring, the platform enables infrastructure, applications, and operational policies to be managed consistently through Git, providing reliable deployments, stronger security governance, and improved operational efficiency.
 
 ---
 
@@ -75,15 +79,15 @@ The platform begins with Terraform provisioning a VPC, an EKS cluster, ECR repos
 
 The platform is organized into five cooperating layers.
 
-**Infrastructure Layer** — Terraform provisions all AWS resources: a VPC with public/private subnets across two availability zones, an EKS cluster with a managed node group, ECR repositories for each microservice, an RDS PostgreSQL instance, and the IAM roles required by the cluster and its controllers. A dedicated `argocd-bootstrap` module installs ArgoCD via Helm and creates the Root Application, handing control to GitOps entirely.
+- **Infrastructure Layer** — Terraform provisions all AWS resources: a VPC with public/private subnets across two availability zones, an EKS cluster with a managed node group, ECR repositories for each microservice, an RDS PostgreSQL instance, and the IAM roles required by the cluster and its controllers. A dedicated `argocd-bootstrap` module installs ArgoCD via Helm and creates the Root Application, handing control to GitOps entirely.
 
-**GitOps Layer** — ArgoCD continuously reconciles the cluster state against what is declared in Git. A single Root Application watches `platform/gitops/argocd/applications/` and manages four child Applications, each deployed in a specific sync wave to respect dependency ordering.
+- **GitOps Layer** — ArgoCD continuously reconciles the cluster state against what is declared in Git. A single Root Application watches `platform/gitops/argocd/applications/` and manages four child Applications, each deployed in a specific sync wave to respect dependency ordering.
 
-**Security Layer** — Controls operate at four points in the lifecycle: OPA Rego evaluates Terraform plans before apply, Trivy scans container images before they reach the registry, OPA Gatekeeper validates every Pod at admission time, and Falco inspects syscalls at runtime on every node.
+- **Security Layer** — Controls operate at four points in the lifecycle: OPA Rego evaluates Terraform plans before apply, Trivy scans container images before they reach the registry, OPA Gatekeeper validates every Pod at admission time, and Falco inspects syscalls at runtime on every node.
 
-**Observability Layer** — Prometheus scrapes metrics from the cluster, ArgoCD, Gatekeeper, Falco, and the application services. Grafana visualizes them through three custom dashboards, and Alertmanager routes alert conditions to Slack.
+- **Observability Layer** — Prometheus scrapes metrics from the cluster, ArgoCD, Gatekeeper, Falco, and the application services. Grafana visualizes them through three custom dashboards, and Alertmanager routes alert conditions to Slack.
 
-**Application Layer** — Online Boutique runs as 11 interconnected gRPC microservices plus a Redis cache and a load generator, deployed as Argo Rollouts resources to support Blue/Green delivery.
+- **Application Layer** — Online Boutique runs as 11 interconnected gRPC microservices plus a Redis cache and a load generator, deployed as Argo Rollouts resources to support Blue/Green delivery.
 
 ### End-to-End Platform Flow
 

@@ -13,6 +13,8 @@
 
 package terraform.compliance
 
+import rego.v1
+
 # =============================================================================
 # Tagging Policy
 # Every major resource must carry a "Name" tag, consistent with

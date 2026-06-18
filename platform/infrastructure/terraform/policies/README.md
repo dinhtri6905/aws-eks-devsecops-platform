@@ -30,92 +30,103 @@ Each policy exposes two rule sets:
 | `deny` | **Blocks** `terraform apply` | Security or compliance violation that must be fixed before deployment |
 | `warn` | Logged only, non-blocking | Findings that should be reviewed but do not require immediate remediation |
 
+The `opa-gate` job runs each policy's `deny` set first and sums the violation counts; if the total is greater than zero, the job exits 1 and the subsequent `apply` job never runs. `warn` sets are evaluated separately afterward purely for visibility in the GitHub Actions log — they do not affect the exit code.
+
+> **Note:** `opa test` / `opa check` are **not** run against this directory. Those commands are used elsewhere in `app-ci.yaml` for a separate set of Kubernetes admission policies — the policies here are validated only by `opa eval` against a real plan, both in CI and locally.
+
 ---
 
 ## Policies
 
 ### security.rego
 
-**Package:** `data.terraform.security`
+**Package:** `terraform.security`
 
-Enforces security hardening for EKS, ECR, RDS, and IAM resources created by Terraform.
+Hardening checks for EKS, ECR, RDS, Security Groups, and IAM resources created by Terraform.
 
 #### Deny Rules
 
-| ID | Resource type | Condition that triggers deny |
-|---|---|---|
-| `eks_public_endpoint_unrestricted` | `aws_eks_cluster` | `endpoint_public_access = true` and `public_access_cidrs` is not restricted (contains `0.0.0.0/0`) |
-| `eks_secrets_not_encrypted` | `aws_eks_cluster` | `encryption_config` block is missing or does not include `secrets` as a resource type |
-| `ecr_scan_on_push_disabled` | `aws_ecr_repository` | `image_scanning_configuration.scan_on_push = false` |
-| `rds_publicly_accessible` | `aws_db_instance` | `publicly_accessible = true` |
-| `rds_storage_not_encrypted` | `aws_db_instance` | `storage_encrypted = false` |
-| `iam_wildcard_action_and_resource` | `aws_iam_policy` / `aws_iam_role_policy` | Policy document contains `Action: "*"` with `Resource: "*"` and `Effect: "Allow"` |
+| Resource type | Condition that triggers deny |
+|---|---|
+| `aws_eks_cluster` | `endpoint_public_access = true` and `public_access_cidrs` contains `0.0.0.0/0` |
+| `aws_eks_cluster` | `enabled_cluster_log_types` is missing `audit` or `authenticator` |
+| `aws_eks_node_group` | `disk_size` is less than 20 GiB |
+| `aws_ecr_repository` | `image_scanning_configuration.scan_on_push` is not `true` |
+| `aws_db_instance` | `storage_encrypted` is not `true` |
+| `aws_db_instance` | `publicly_accessible = true` |
+| `aws_db_instance` | `backup_retention_period` is less than 7 |
+| `aws_security_group_rule` (ingress) | A sensitive port (`22`, `3389`, `3306`, `5432`, `6379`) is open to `0.0.0.0/0` |
+| `aws_security_group_rule` (ingress) | `protocol = "-1"` (all traffic) open to `0.0.0.0/0` |
+| `aws_security_group` | An inline ingress block opens a sensitive port to `0.0.0.0/0` |
+| `aws_iam_policy` | A statement grants `Effect: Allow` with both `Action: "*"` and `Resource: "*"` |
+| `aws_iam_user_policy` | Any policy attached directly to an IAM user (roles/IRSA required instead) |
 
 #### Warn Rules
 
-| ID | Resource type | Condition that triggers warn |
-|---|---|---|
-| `ecr_tag_mutability_mutable` | `aws_ecr_repository` | `image_tag_mutability = "MUTABLE"` — immutable tags recommended to prevent tag overwriting |
-| `rds_deletion_protection_disabled` | `aws_db_instance` | `deletion_protection = false` — protects against accidental instance deletion |
-| `iam_wildcard_resource` | `aws_iam_policy` | Policy uses `Resource: "*"` without a wildcard action — should be scoped where possible |
+| Resource type | Condition that triggers warn |
+|---|---|
+| `aws_ecr_repository` | `image_tag_mutability = "MUTABLE"` — `IMMUTABLE` recommended for reproducible prod deployments |
+| `aws_db_instance` | `deletion_protection = false` |
+| `aws_db_instance` | `performance_insights_enabled = false` |
+| `aws_eks_cluster` | `endpoint_public_access = true` (advisory — acceptable in dev, should be `false` in prod with VPN/bastion access) |
 
 ---
 
 ### networking.rego
 
-**Package:** `data.terraform.networking`
+**Package:** `terraform.networking`
 
-Enforces network security boundaries for the EKS cluster VPC, subnets, and Security Groups.
+Network security boundaries for the VPC, subnets, NAT gateways, Security Groups, and route tables.
 
 #### Deny Rules
 
-| ID | Resource type | Condition that triggers deny |
-|---|---|---|
-| `sg_allow_all_inbound` | `aws_security_group` / `aws_vpc_security_group_ingress_rule` | Ingress rule with `from_port = 0`, `to_port = 0`, `protocol = "-1"` open to `0.0.0.0/0` or `::/0` |
-| `sg_ssh_open_to_internet` | `aws_security_group` | Port `22` open to `0.0.0.0/0` or `::/0` in any ingress rule |
-| `eks_nodes_in_public_subnet` | `aws_eks_node_group` | `subnet_ids` references subnets tagged or named as public — EKS worker nodes must run in private subnets only |
+| Resource type | Condition that triggers deny |
+|---|---|
+| `aws_vpc` | `enable_dns_hostnames` is not `true` |
+| `aws_vpc` | `enable_dns_support` is not `true` |
+| `aws_subnet` | `map_public_ip_on_launch = true` on a subnet tagged as `private` |
+| `aws_nat_gateway` | No NAT Gateway exists while private subnets are present in the plan |
+| `aws_security_group` | An inline ingress rule allows all traffic (`protocol = "-1"`, port `0`–`0`) from `0.0.0.0/0` |
+| `aws_security_group_rule` (ingress) | `protocol = "-1"` open to `0.0.0.0/0` |
 
 #### Warn Rules
 
-| ID | Resource type | Condition that triggers warn |
-|---|---|---|
-| `vpc_flow_logs_disabled` | `aws_vpc` | No `aws_flow_log` resource references this VPC — flow logs should be enabled for audit and incident response |
-| `public_subnet_auto_assign_ip` | `aws_subnet` | `map_public_ip_on_launch = true` — flag for review to confirm intent; acceptable for NAT Gateway subnets |
+| Resource type | Condition that triggers warn |
+|---|---|
+| `aws_vpc` | CIDR block ends in `/8` — considered too broad |
+| `aws_vpc` | No `aws_flow_log` resource references the VPC |
+| `aws_subnet` | Missing both `kubernetes.io/role/elb` and `kubernetes.io/role/internal-elb` tags (needed for AWS Load Balancer Controller subnet discovery) |
+| `aws_nat_gateway` | Exactly one NAT Gateway exists but subnets span more than one Availability Zone (single point of failure — acceptable in dev, not in prod) |
+| `aws_security_group` | A security group tagged `alb` opens a port other than `80`/`443` to `0.0.0.0/0` |
+| `aws_route_table` | A route table tagged `public` has no route to an Internet Gateway (`igw-*`) |
 
 ---
 
 ### compliance.rego
 
-**Package:** `data.terraform.compliance`
+**Package:** `terraform.compliance`
 
-Enforces organizational tagging standards and encryption-at-rest requirements across all resource types.
+Tagging, encryption-at-rest, and backup/retention checks across the resources Terraform actually provisions (`aws_vpc`, `aws_subnet`, `aws_eks_cluster`, `aws_eks_node_group`, `aws_ecr_repository`, `aws_db_instance`, `aws_iam_role`, security groups, ALB). It does not check CloudTrail or S3, since this configuration does not provision those.
 
-#### Required Tags
+#### Deny Rules
 
-All taggable AWS resources (`aws_vpc`, `aws_subnet`, `aws_eks_cluster`, `aws_db_instance`, `aws_ecr_repository`, `aws_s3_bucket`, `aws_security_group`, `aws_iam_role`, etc.) must carry the following tags:
-
-| Tag key | Expected value | Severity if missing |
-|---|---|---|
-| `Project` | Any non-empty string | **deny** |
-| `Environment` | Any non-empty string (e.g. `dev`, `prod`) | **deny** |
-| `ManagedBy` | `terraform` | **deny** |
-| `Owner` | Any non-empty string (team or individual) | warn |
-
-#### Encryption Rules
-
-| ID | Resource type | Condition that triggers deny |
-|---|---|---|
-| `ebs_volume_not_encrypted` | `aws_ebs_volume` | `encrypted = false` or attribute absent |
-| `eks_node_root_volume_not_encrypted` | `aws_eks_node_group` | `launch_template` does not specify an encrypted root volume |
-| `s3_no_server_side_encryption` | `aws_s3_bucket` | No `aws_s3_bucket_server_side_encryption_configuration` resource associated with the bucket |
-| `rds_storage_not_encrypted` | `aws_db_instance` | `storage_encrypted = false` *(also enforced in `security.rego` — defence in depth)* |
+| Resource type | Condition that triggers deny |
+|---|---|
+| `aws_vpc`, `aws_subnet`, `aws_internet_gateway`, `aws_nat_gateway`, `aws_security_group`, `aws_eks_cluster`, `aws_eks_node_group`, `aws_ecr_repository`, `aws_lb`, `aws_db_instance`, `aws_iam_role` | No `tags` block at all |
+| Same resource types as above | `tags` block exists but is missing a `Name` tag |
+| `aws_db_instance` | `storage_encrypted` is not `true` *(also enforced in `security.rego` — defense in depth)* |
+| `aws_ecr_repository` | `encryption_configuration.encryption_type` is not `AES256` or `KMS` |
+| `aws_db_instance` | `backup_retention_period` is less than 7 *(also enforced in `security.rego`)* |
 
 #### Warn Rules
 
-| ID | Resource type | Condition that triggers warn |
-|---|---|---|
-| `s3_versioning_disabled` | `aws_s3_bucket` | No `aws_s3_bucket_versioning` resource with `status = "Enabled"` — required for state bucket recovery |
-| `kms_key_rotation_disabled` | `aws_kms_key` | `enable_key_rotation = false` — automatic rotation recommended for all KMS keys |
+| Resource type | Condition that triggers warn |
+|---|---|
+| `aws_db_instance` | `storage_type = "gp2"` — `gp3` recommended for cost/performance |
+| `aws_eks_node_group` | No custom `launch_template` defined — advisory reminder to confirm EBS volume encryption is configured for prod |
+| `aws_iam_role` | Role `name` does not contain a `-` — does not follow the `<project>-<env>-<purpose>-role` naming convention |
+| `aws_db_instance` | `multi_az = false` — advisory; acceptable in dev, recommended `true` for prod HA |
+| Any `aws_ecr_repository` present | No `aws_ecr_lifecycle_policy` resource found in the plan — recommended to bound image storage growth |
 
 ---
 
@@ -173,21 +184,4 @@ for policy in security networking compliance; do
 done
 ```
 
-Run OPA unit tests (if test files are present alongside the policy files):
-
-```bash
-opa test platform/infrastructure/terraform/policies/ --verbose
-```
-
----
-
-## Adding a New Rule
-
-1. Open the relevant `.rego` file (`security.rego`, `networking.rego`, or `compliance.rego`).
-2. Add the rule to the `deny` or `warn` set with a descriptive message string.
-3. Write a corresponding unit test in `<policy>_test.rego` covering both the passing and failing case.
-4. Run `opa test` locally to confirm the test passes.
-5. Run `opa eval` against a real plan JSON to confirm the rule fires as expected.
-6. Open a PR — `app-ci.yaml` will automatically run `opa test` and `opa check` against all `.rego` files.
-
-> Keep rule messages human-readable — they are printed directly in the GitHub Actions log and Slack notifications when a violation blocks apply.
+This is the same pattern the `opa-gate` job in `terraform-cd.yaml` runs in CI — running it locally before pushing lets you catch violations without waiting for the pipeline.
