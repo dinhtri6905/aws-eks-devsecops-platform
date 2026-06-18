@@ -1,17 +1,15 @@
 # ============================================================
-# Helm values for falco
-# Chart: https://github.com/falcosecurity/charts (falco)
+# Helm values for Falco
+# Chart: https://falcosecurity.github.io/charts
+# Version: 4.7.4
 #
-# Custom rules are loaded from
-# platform/security/falco/rules/custom-rules.yaml and embedded
-# below under customRules — Helm values do not support
-# external file references, so this content is kept in sync
-# manually (or via a templating step in CI) with that source
-# file.
+# Custom rules are no longer inline here.
+# They are defined in custom-rules/custom-rules.yaml as a
+# ConfigMap, then mounted into Falco via extraVolumes so they
+# can be updated independently without a Helm upgrade.
 # ============================================================
 
-# Modern eBPF driver — no kernel module required, works on EKS
-# managed node AMIs without extra setup.
+# Modern eBPF driver — no kernel module required on EKS
 driver:
   kind: ebpf
 
@@ -24,13 +22,13 @@ falcoctl:
     follow:
       enabled: true
 
-# Send security events to stdout (collected by Fluent Bit /
-# CloudWatch) and expose them for Falcosidekick if added later.
 falco:
   rules_file:
     - /etc/falco/falco_rules.yaml
     - /etc/falco/falco_rules.local.yaml
     - /etc/falco/rules.d
+    # Custom rules mounted from ConfigMap
+    - /etc/falco/custom-rules/custom-rules.yaml
 
   json_output: true
   json_include_output_property: true
@@ -48,10 +46,9 @@ resources:
     cpu: 1000m
     memory: 1024Mi
 
-# Falco needs privileged access to read kernel events via
-# eBPF — this is an intentional, documented exception to the
-# disallow-privileged OPA constraint (the `falco` namespace is
-# excluded in each Constraint's excludedNamespaces list).
+# Falco needs privileged access to read kernel events via eBPF.
+# The 'falco' namespace is excluded in each OPA Constraint's
+# excludedNamespaces list — this is an intentional exception.
 securityContext:
   privileged: true
 
@@ -59,209 +56,15 @@ tolerations:
   - effect: NoSchedule
     operator: Exists
 
-# Custom rules — keep in sync with
-# platform/security/falco/rules/custom-rules.yaml
-customRules:
-  custom-rules.yaml: |-
-    - list: boutique_namespaces
-      items: [online-boutique, online-boutique-dev, online-boutique-prod]
+# Mount the custom-rules ConfigMap into the Falco DaemonSet
+# so rules can be updated by changing the ConfigMap only,
+# without triggering a full Helm chart upgrade.
+extraVolumes:
+  - name: custom-rules
+    configMap:
+      name: falco-custom-rules
 
-    - list: allowed_boutique_containers
-      items: [
-        frontend,
-        cartservice,
-        productcatalogservice,
-        currencyservice,
-        paymentservice,
-        shippingservice,
-        emailservice,
-        checkoutservice,
-        recommendationservice,
-        adservice,
-        loadgenerator,
-        shoppingassistantservice
-      ]
-
-    - list: shell_binaries
-      items: [bash, sh, zsh, csh, ksh, dash, fish]
-
-    - macro: in_boutique_namespace
-      condition: (k8s.ns.name in (boutique_namespaces))
-
-    - macro: spawned_process
-      condition: (evt.type = execve and evt.dir = <)
-
-    - macro: container
-      condition: (container.id != host)
-
-    - rule: Shell Spawned in Online Boutique Container
-      desc: >
-        Detects an interactive shell being spawned inside any
-        Online Boutique microservice container.
-      condition: >
-        spawned_process
-        and container
-        and in_boutique_namespace
-        and proc.name in (shell_binaries)
-        and not proc.pname in (shell_binaries)
-      output: >
-        Shell spawned inside microservice container
-        (user=%user.name container=%container.name image=%container.image.repository
-        command=%proc.cmdline parent=%proc.pname namespace=%k8s.ns.name pod=%k8s.pod.name)
-      priority: CRITICAL
-      tags: [container, shell, mitre_execution]
-
-    - rule: Package Manager Execution in Container
-      desc: >
-        Detects execution of package managers inside a running
-        container — application containers should be immutable.
-      condition: >
-        spawned_process
-        and container
-        and in_boutique_namespace
-        and proc.name in (apt, apt-get, apk, yum, dnf, pip, pip3, npm)
-      output: >
-        Package manager executed inside running container
-        (user=%user.name command=%proc.cmdline container=%container.name
-        image=%container.image.repository namespace=%k8s.ns.name pod=%k8s.pod.name)
-      priority: WARNING
-      tags: [container, package_management, mitre_persistence]
-
-    - rule: Sensitive File Read in Container
-      desc: >
-        Detects an attempt to read sensitive files (kubeconfig,
-        cloud credentials, /etc/shadow) from within a container.
-      condition: >
-        open_read
-        and container
-        and in_boutique_namespace
-        and (fd.name startswith /root/.kube
-             or fd.name startswith /root/.aws
-             or fd.name startswith /var/run/secrets/eks.amazonaws.com
-             or fd.name = /etc/shadow
-             or fd.name = /etc/sudoers)
-      output: >
-        Sensitive file opened for reading inside container
-        (user=%user.name file=%fd.name container=%container.name
-        image=%container.image.repository namespace=%k8s.ns.name pod=%k8s.pod.name)
-      priority: CRITICAL
-      tags: [container, filesystem, mitre_credential_access]
-
-    - rule: Unexpected Outbound Connection from Microservice
-      desc: >
-        Detects outbound network connections from an Online
-        Boutique microservice to a non-standard port.
-      condition: >
-        outbound
-        and container
-        and in_boutique_namespace
-        and not fd.sport in (53, 443, 3550, 5000, 5432, 6379, 7000, 7070, 8080, 9555, 9090, 50051)
-      output: >
-        Unexpected outbound connection from microservice
-        (command=%proc.cmdline connection=%fd.name container=%container.name
-        image=%container.image.repository namespace=%k8s.ns.name pod=%k8s.pod.name)
-      priority: NOTICE
-      tags: [network, mitre_exfiltration]
-
-    - rule: Write Below Binary Directory in Container
-      desc: >
-        Detects a file being written under /bin, /sbin, /usr/bin
-        or /usr/sbin inside a running container.
-      condition: >
-        open_write
-        and container
-        and in_boutique_namespace
-        and (fd.directory in (/bin, /sbin, /usr/bin, /usr/sbin, /usr/local/bin))
-      output: >
-        File written below binary directory in container
-        (user=%user.name file=%fd.name container=%container.name
-        image=%container.image.repository namespace=%k8s.ns.name pod=%k8s.pod.name)
-      priority: CRITICAL
-      tags: [container, filesystem, mitre_persistence]
-
-    - rule: Unexpected Container Running in Boutique Namespace
-      desc: >
-        Detects execution activity from a container running in an
-        Online Boutique namespace whose container name is not part
-        of the approved microservice set.
-
-      condition: >
-        spawned_process
-        and container
-        and in_boutique_namespace
-        and not container.name in (allowed_boutique_containers)
-
-      output: >
-        Unexpected container detected in Online Boutique namespace
-        (container=%container.name image=%container.image.repository
-        namespace=%k8s.ns.name pod=%k8s.pod.name)
-
-      priority: WARNING
-
-      tags: [container, anomaly_detection, mitre_initial_access]
-
-    - rule: Setuid or Setgid Bit Set in Container
-      desc: >
-        Detects the setuid or setgid bit being set on a file
-        inside a container.
-      condition: >
-        (evt.type in (chmod, fchmod) and evt.dir = >)
-        and container
-        and in_boutique_namespace
-        and (evt.arg.mode contains "S_ISUID" or evt.arg.mode contains "S_ISGID")
-      output: >
-        Setuid/setgid bit set on file inside container
-        (user=%user.name file=%evt.arg.filename mode=%evt.arg.mode
-        container=%container.name image=%container.image.repository
-        namespace=%k8s.ns.name pod=%k8s.pod.name)
-      priority: CRITICAL
-      tags: [container, privilege_escalation, mitre_privilege_escalation]
-
-    - rule: Possible Cryptomining Process Detected
-      desc: >
-        Detects process names commonly associated with
-        cryptocurrency mining tools.
-      condition: >
-        spawned_process
-        and container
-        and in_boutique_namespace
-        and proc.name in (xmrig, minerd, ethminer, cpuminer, cgminer, t-rex, nbminer)
-      output: >
-        Possible cryptomining process detected in container
-        (command=%proc.cmdline container=%container.name
-        image=%container.image.repository namespace=%k8s.ns.name pod=%k8s.pod.name)
-      priority: CRITICAL
-      tags: [container, cryptomining, mitre_impact]
-
-    - rule: Service Account Token Modification
-      desc: >
-        Detects write access to the mounted Kubernetes service
-        account token file.
-      condition: >
-        open_write
-        and container
-        and in_boutique_namespace
-        and fd.name startswith /var/run/secrets/kubernetes.io/serviceaccount
-      output: >
-        Write to mounted service account token detected
-        (user=%user.name file=%fd.name container=%container.name
-        image=%container.image.repository namespace=%k8s.ns.name pod=%k8s.pod.name)
-      priority: CRITICAL
-      tags: [container, k8s, mitre_credential_access]
-
-    - rule: Drift - New Binary Executed in Container
-      desc: >
-        Detects execution of a binary added to the container
-        filesystem after the container started.
-      condition: >
-        spawned_process
-        and container
-        and in_boutique_namespace
-        and evt.type = execve
-        and proc.is_exe_writable = true
-      output: >
-        Newly written executable run inside container (drift detected)
-        (command=%proc.cmdline exe=%proc.exepath container=%container.name
-        image=%container.image.repository namespace=%k8s.ns.name pod=%k8s.pod.name)
-      priority: WARNING
-      tags: [container, drift, mitre_persistence]
+extraVolumeMounts:
+  - name: custom-rules
+    mountPath: /etc/falco/custom-rules
+    readOnly: true

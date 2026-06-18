@@ -1,10 +1,14 @@
 # ============================================================
-# falco
-# Runtime threat detection via eBPF. Deployed as a DaemonSet
-# across all worker nodes. Custom rules tailored to the Online
-# Boutique workloads are defined in values.yaml
-# (falco.customRules), kept in sync with
-# platform/security/falco/rules/custom-rules.yaml.
+# Falco — Runtime Threat Detection
+# Deploys Falco as a DaemonSet on every worker node via Helm.
+# Custom detection rules are loaded from a separate ConfigMap
+# (custom-rules/custom-rules.yaml) and mounted into Falco at
+# /etc/falco/custom-rules/custom-rules.yaml.
+#
+# Upgrade path:
+#   - Helm config change  → edit values.yaml
+#   - Rule change only    → edit custom-rules/custom-rules.yaml
+#     (Falco hot-reloads via inotify, no pod restart needed)
 # ============================================================
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
@@ -18,3 +22,6 @@ helmCharts:
     releaseName: falco
     namespace: falco
     valuesFile: values.yaml
+
+resources:
+  - custom-rules/custom-rules.yaml
