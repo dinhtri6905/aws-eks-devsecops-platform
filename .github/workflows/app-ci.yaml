@@ -1,10 +1,10 @@
 name: Application CI
 
 # =============================================================================
-# Application CI — chạy khi thay đổi GitOps manifests hoặc app source code.
+# Application CI — triggered on changes to GitOps manifests or app source code.
 #
-# Jobs (song song sau gitleaks):
-#   gitleaks → (kustomize-validate, opa-k8s, falco-validate, trivy-fs) → app-ci-summary
+# Job flow (parallel after gitleaks):
+#   gitleaks -> (kustomize-validate, opa-k8s-policies, falco-validate, trivy-filesystem) -> app-ci-summary
 #
 # GitHub Secrets:
 #   SLACK_WEBHOOK_URL
@@ -30,10 +30,11 @@ on:
   #     - "platform/security/falco/**"
   #     - "microservices-application/**"
   #     - ".github/workflows/app-ci.yaml"
+  
   workflow_dispatch:
 
 # =============================================================================
-# JOB 1: Gitleaks — secret scanning (chạy trước tất cả)
+# JOB 1: Gitleaks — secret scanning (runs before all other jobs)
 # =============================================================================
 jobs:
   gitleaks:
@@ -44,13 +45,13 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
         with:
-          fetch-depth: 0  # Full history để scan tất cả commits
+          fetch-depth: 0  # Full history required to scan all commits
 
       - name: Run Gitleaks
         uses: gitleaks/gitleaks-action@v2
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          # GITLEAKS_LICENSE: ${{ secrets.GITLEAKS_LICENSE }}  # Chỉ cần cho org repos
+          # GITLEAKS_LICENSE: ${{ secrets.GITLEAKS_LICENSE }}  # Required for org repos only
 
       - name: Upload Gitleaks report
         if: failure()
@@ -104,10 +105,10 @@ jobs:
               echo "--- Building: $name ($path)"
               kustomize build "$path" \
                 > ${{ runner.temp }}/built-manifests/${name}.yaml 2>&1 && \
-                echo "✅ $name: OK" || \
-                { echo "❌ $name: FAILED"; FAILED=1; }
+                echo "  [OK] $name" || \
+                { echo "  [FAIL] $name"; FAILED=1; }
             else
-              echo "⚠️ $name: path not found ($path) — skipping"
+              echo "  [SKIP] $name: path not found ($path)"
             fi
           done
 
@@ -123,11 +124,12 @@ jobs:
             kubeconform \
               -strict \
               -ignore-missing-schemas \
+              -schema-location default \
               -kubernetes-version "1.33.0" \
               -output pretty \
               "$manifest" && \
-              echo "✅ $name: schema OK" || \
-              { echo "❌ $name: schema FAILED"; FAILED=1; }
+              echo "  [OK] $name: schema valid" || \
+              { echo "  [FAIL] $name: schema invalid"; FAILED=1; }
           done
           exit $FAILED
 
@@ -168,18 +170,18 @@ jobs:
               --format pretty \
               2>&1 | tee ${{ runner.temp }}/opa-test-results.txt
 
-            # Check exit code
+            # Capture JSON results separately for artifact upload
             opa test platform/security/opa/ --format json \
               > ${{ runner.temp }}/opa-test-results.json 2>/dev/null || true
           else
-            echo "⚠️ platform/security/opa/ not found — skipping OPA tests"
+            echo "[SKIP] platform/security/opa/ not found — skipping OPA tests"
           fi
 
       - name: Validate OPA policy syntax
         run: |
           echo "=== Checking OPA policy syntax ==="
           find platform/security/opa/ -name "*.rego" 2>/dev/null | while read -r f; do
-            opa check "$f" && echo "✅ $f: syntax OK" || echo "❌ $f: syntax ERROR"
+            opa check "$f" && echo "  [OK] $f: syntax valid" || echo "  [FAIL] $f: syntax error"
           done
 
       - name: Upload OPA test results
@@ -202,9 +204,8 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Install Falco (validation mode only)
+      - name: Install Falco (validation mode only — no kernel module required)
         run: |
-          # Cài falco để validate rules — không cần kernel module
           curl -fsSL https://falco.org/repo/falcosecurity-packages.asc | \
             sudo gpg --dearmor -o /usr/share/keyrings/falco-archive-keyring.gpg
           echo "deb [signed-by=/usr/share/keyrings/falco-archive-keyring.gpg] \
@@ -222,11 +223,11 @@ jobs:
             find platform/security/falco -name "*.yaml" -o -name "*.yml" | while read -r rules_file; do
               echo "--- Validating: $rules_file"
               falco --validate "$rules_file" && \
-                echo "✅ $rules_file: valid" || \
-                echo "❌ $rules_file: INVALID"
+                echo "  [OK] $rules_file: valid" || \
+                echo "  [FAIL] $rules_file: invalid"
             done
           else
-            echo "⚠️ platform/security/falco/ not found"
+            echo "[SKIP] platform/security/falco/ not found"
           fi
 
       - name: Validate Falco rules (Docker fallback)
@@ -239,13 +240,13 @@ jobs:
                 -v "${{ github.workspace }}:/workspace" \
                 falcosecurity/falco:latest \
                 falco --validate "/workspace/$rules_file" && \
-                echo "✅ $rules_file: valid" || \
-                echo "❌ $rules_file: INVALID"
+                echo "  [OK] $rules_file: valid" || \
+                echo "  [FAIL] $rules_file: invalid"
             done
           fi
 
 # =============================================================================
-# JOB 5: Trivy — Filesystem scan (source code, sebelum build image)
+# JOB 5: Trivy — Filesystem scan (source code, before image build)
 # =============================================================================
   trivy-filesystem:
     name: Trivy Filesystem Scan
@@ -260,7 +261,7 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Run Trivy filesystem scan (SARIF)
-        uses: aquasecurity/trivy-action@master
+        uses: aquasecurity/trivy-action@0.28.0
         with:
           scan-type: "fs"
           scan-ref: "."
@@ -271,7 +272,7 @@ jobs:
           exit-code: "0"  # non-blocking — report only
 
       - name: Run Trivy filesystem scan (table for logs)
-        uses: aquasecurity/trivy-action@master
+        uses: aquasecurity/trivy-action@0.28.0
         with:
           scan-type: "fs"
           scan-ref: "."
@@ -328,7 +329,11 @@ jobs:
         uses: actions/github-script@v7
         with:
           script: |
-            const icon = s => s === 'success' ? '✅' : s === 'failure' ? '❌' : s === 'skipped' ? '⏭️' : '⚠️';
+            const statusLabel = s =>
+              s === 'success' ? '[PASS]' :
+              s === 'failure' ? '[FAIL]' :
+              s === 'skipped' ? '[SKIP]' : '[WARN]';
+
             const jobs = {
               'Gitleaks':           '${{ needs.gitleaks.result }}',
               'Kustomize Validate': '${{ needs.kustomize-validate.result }}',
@@ -337,15 +342,15 @@ jobs:
               'Trivy Filesystem':   '${{ needs.trivy-filesystem.result }}',
             };
             const gitleaksFailed = '${{ needs.gitleaks.result }}' === 'failure';
-            const allPass = Object.values(jobs).every(v => ['success','skipped'].includes(v));
+            const allPass = Object.values(jobs).every(v => ['success', 'skipped'].includes(v));
 
-            let body = `## App CI [DEV] — ${allPass ? '✅ ALL PASSED' : '❌ ACTION REQUIRED'}\n\n`;
+            let body = `## App CI [DEV] — ${allPass ? '[ALL PASSED]' : '[ACTION REQUIRED]'}\n\n`;
             if (gitleaksFailed) {
-              body += '> ⚠️ **Gitleaks detected secrets in code. All downstream jobs blocked.**\n\n';
+              body += '> WARNING: Gitleaks detected secrets in the codebase. All downstream jobs were blocked.\n\n';
             }
             body += '| Job | Result |\n|-----|--------|\n';
             for (const [job, result] of Object.entries(jobs)) {
-              body += `| ${job} | ${icon(result)} \`${result}\` |\n`;
+              body += `| ${job} | ${statusLabel(result)} \`${result}\` |\n`;
             }
             body += `\nCommit: \`${{ github.sha }}\` | Branch: \`${{ github.head_ref }}\``;
 
@@ -367,7 +372,7 @@ jobs:
                needs.kustomize-validate.result == 'success')
               && 'good' || 'danger'
             }}
-          SLACK_TITLE: "App CI — DEV"
+          SLACK_TITLE: "App CI - DEV"
           SLACK_MESSAGE: |
             Branch    : ${{ github.ref_name }}
             Gitleaks  : ${{ needs.gitleaks.result }}

@@ -2,7 +2,24 @@
 
 GitOps layer for the Cloud-Native Secure GitOps Platform on AWS EKS.
 
-This directory contains all Kubernetes manifests, Helm values, and Kustomize configurations managed by ArgoCD. Once the Terraform infrastructure is provisioned, everything in this directory drives the full platform lifecycle — from cluster add-ons to application deployment.
+This directory contains all Kubernetes manifests, Helm values, and Kustomize
+configurations managed by ArgoCD. Terraform provisions the infrastructure and
+bootstraps ArgoCD automatically — once `terraform apply` completes, ArgoCD
+takes ownership of everything in this directory and drives the full platform
+lifecycle from cluster add-ons to application deployment.
+
+---
+
+## Table of Contents
+
+- [How It Works](#how-it-works)
+- [Directory Structure](#directory-structure)
+- [ArgoCD Layer](#argocd-layer)
+- [Kustomize Layer](#kustomize-layer)
+- [Sync Wave Order](#sync-wave-order)
+- [Namespaces](#namespaces)
+- [Useful Commands](#useful-commands)
+- [Before You Push](#before-you-push)
 
 ---
 
@@ -11,18 +28,19 @@ This directory contains all Kubernetes manifests, Helm values, and Kustomize con
 ```
 terraform apply
       │
-      └── EKS Cluster ready
-            │
-            └── ArgoCD bootstrapped (via Helm)
-                  │
-                  └── kubectl apply -f argocd/root-app.yaml   ← one-time manual step
-                              │
-                              │  ArgoCD reads argocd/applications/
-                              │
-                              ├── Wave 1 ── platform-services.yaml  → Metrics Server, AWS LBC
-                              ├── Wave 2 ── security.yaml           → OPA Gatekeeper, Falco
-                              ├── Wave 3 ── observability.yaml      → Prometheus, Grafana
-                              └── Wave 4 ── online-boutique.yaml    → 13 microservices
+      ├── EKS Cluster provisioned
+      │
+      └── argocd-bootstrap module
+            ├── Installs ArgoCD via Helm
+            ├── Applies AppProject (projects/platform.yaml)
+            └── Applies Root Application (root-app.yaml)
+                        │
+                        │  ArgoCD reads argocd/applications/
+                        │
+                        ├── Wave 1 ── platform-services.yaml  → Metrics Server, AWS LBC
+                        ├── Wave 2 ── security.yaml           → OPA Gatekeeper, Falco
+                        ├── Wave 3 ── observability.yaml      → Prometheus, Grafana
+                        └── Wave 4 ── online-boutique.yaml    → 13 microservices
 ```
 
 ArgoCD syncs all child Applications automatically. Each Application either:
@@ -37,24 +55,24 @@ ArgoCD syncs all child Applications automatically. Each Application either:
 platform/gitops/
 │
 ├── argocd/                          # ArgoCD App-of-Apps pattern
-│   ├── root-app.yaml                # Entrypoint — apply this once after terraform apply
+│   ├── root-app.yaml                # Entrypoint — applied automatically by Terraform
 │   ├── projects/
 │   │   └── platform.yaml           # AppProject: RBAC, allowed repos, allowed namespaces
 │   └── applications/
-│       ├── platform-services.yaml  # Wave 0: Metrics Server + AWS Load Balancer Controller
-│       ├── security.yaml           # Wave 1: OPA Gatekeeper + Falco
-│       ├── observability.yaml      # Wave 2: kube-prometheus-stack
-│       └── online-boutique.yaml    # Wave 3: Online Boutique microservices
+│       ├── platform-services.yaml  # Wave 1: Metrics Server + AWS Load Balancer Controller
+│       ├── security.yaml           # Wave 2: OPA Gatekeeper + Falco
+│       ├── observability.yaml      # Wave 3: kube-prometheus-stack
+│       └── online-boutique.yaml    # Wave 4: Online Boutique microservices
 │
 └── kustomize/
-    ├── base/                        # Shared cluster-wide config
+    ├── base/                        # Shared cluster-wide config (namespaces, labels)
     ├── platform-services/           # Helm values for cluster add-ons
-    ├── security/                    # Helm values + OPA policies
-    ├── observability/               # Helm values + dashboards + alerts
-    ├── applications/online-boutique # 13 microservice manifests (base)
+    ├── security/                    # Helm values + OPA policies + Falco custom rules
+    ├── observability/               # Helm values + dashboards + alerts + servicemonitors
+    ├── applications/online-boutique # 13 microservice base manifests
     └── overlays/
-        ├── dev/                     # Dev patches: replicas=1, dev config
-        └── prod/                    # Prod patches: replicas=2, HPA, higher limits
+        ├── dev/                     # Dev: replicas=1, debug config, env=dev
+        └── prod/                    # Prod: replicas=2, HPA, higher limits
 ```
 
 ---
@@ -63,24 +81,25 @@ platform/gitops/
 
 ### `argocd/root-app.yaml`
 
-The App of Apps entrypoint. Points to `argocd/applications/` in this repository. Apply once after `terraform apply`:
+The App of Apps entrypoint. Points to `argocd/applications/` in this repository.
+Applied automatically by the Terraform `argocd-bootstrap` module — no manual
+step required after `terraform apply`.
 
-```bash
-kubectl apply -f platform/gitops/argocd/root-app.yaml
-```
-
-ArgoCD then discovers and manages all child Applications automatically, including self-healing and drift detection.
+ArgoCD then discovers and manages all child Applications automatically, including
+self-healing and drift detection.
 
 ### `argocd/projects/platform.yaml`
 
 Defines the `platform` AppProject which:
 - Whitelists all Helm chart repositories used by the platform
-- Restricts deployments to specific namespaces (`kube-system`, `monitoring`, `gatekeeper-system`, `falco`, `online-boutique`, `argocd`)
+- Restricts deployments to specific namespaces (`kube-system`, `monitoring`,
+  `gatekeeper-system`, `falco`, `online-boutique`, `argocd`)
 - Allows cluster-scoped resources (Namespace, ClusterRole, CRD, IngressClass, Webhooks)
 
 ### `argocd/applications/`
 
-Each file is an ArgoCD `Application` manifest with a sync wave annotation:
+Each file is an ArgoCD `Application` manifest with a sync wave annotation.
+Sync waves guarantee ordering — Wave N does not start until Wave N-1 is healthy.
 
 | File | Wave | Deploys | Namespace |
 |---|---|---|---|
@@ -88,8 +107,6 @@ Each file is an ArgoCD `Application` manifest with a sync wave annotation:
 | `security.yaml` | 2 | OPA Gatekeeper, Falco | `gatekeeper-system`, `falco` |
 | `observability.yaml` | 3 | kube-prometheus-stack | `monitoring` |
 | `online-boutique.yaml` | 4 | Online Boutique (13 services) | `online-boutique` |
-
-Sync waves guarantee ordering — Wave N does not start until Wave N-1 is healthy.
 
 ---
 
@@ -102,103 +119,125 @@ Cluster-wide shared resources applied before any overlay:
 | File | Purpose |
 |---|---|
 | `namespace.yaml` | Declares all namespaces (`monitoring`, `falco`, `gatekeeper-system`, `online-boutique`) |
-| `common-labels.yaml` | Common label schema for all resources |
+| `common-labels.yaml` | Common label schema applied to all resources |
 | `kustomization.yaml` | Root kustomization referencing the above |
 
 ### `kustomize/platform-services/`
 
-Helm values files for cluster add-ons. These are referenced by `platform-services.yaml` (ArgoCD Application with `source.helm`), not rendered by Kustomize directly.
+Helm values files for cluster add-ons. Referenced by the `platform-services`
+ArgoCD Application via `source.helm`, not rendered by Kustomize directly.
 
 | Directory | Chart | Version | Purpose |
 |---|---|---|---|
-| `metrics-server/` | `metrics-server/metrics-server` | 3.12.1 | Provides CPU/Memory metrics for HPA and `kubectl top` |
+| `metrics-server/` | `metrics-server/metrics-server` | 3.12.1 | CPU/Memory metrics for HPA and `kubectl top` |
 | `aws-load-balancer-controller/` | `aws/aws-load-balancer-controller` | 1.8.1 | Watches Ingress resources and creates ALB on AWS |
 
-> **Important:** `aws-load-balancer-controller/values.yaml` contains `<LBC_ROLE_ARN>` placeholder.
-> Replace with the actual value before pushing:
-> ```bash
-> terraform output -raw lbc_role_arn
-> ```
+> **Important:** `aws-load-balancer-controller/values.yaml` contains a `<LBC_ROLE_ARN>`
+> placeholder. Replace before pushing — see [Before You Push](#before-you-push).
 
-`ingressclass.yaml` defines the `alb` IngressClass consumed by all `frontend/ingress.yaml` resources.
+`ingressclass.yaml` defines the `alb` IngressClass consumed by `frontend/ingress.yaml`.
 
 ### `kustomize/security/`
 
 #### `opa-gatekeeper/`
 
-OPA Gatekeeper enforces Policy-as-Code at admission time — any non-compliant resource is **rejected before it reaches the API server**.
+OPA Gatekeeper enforces Policy-as-Code at admission time — any non-compliant
+resource is **rejected before it reaches the API server**.
 
 **`values.yaml`** — Helm values for the Gatekeeper controller.
 
-**`templates/`** — ConstraintTemplates define custom policy types (CRDs):
+**`templates/`** — ConstraintTemplates register custom policy types as CRDs (Wave 1):
 
-| Template | What it defines |
-|---|---|
-| `k8srequiredlabels.yaml` | Policy type: all resources must have specified labels |
-| `k8srequiredresources.yaml` | Policy type: all containers must declare resource requests and limits |
-| `k8snonroot.yaml` | Policy type: containers must not run as root |
-| `k8sdisallowprivileged.yaml` | Policy type: privileged containers are disallowed |
+| Template | Kind | What it enforces |
+|---|---|---|
+| `k8srequiredlabels.yaml` | `K8sRequiredLabels` | Required labels must be present with values matching a regex |
+| `k8srequiredresources.yaml` | `K8sRequiredResources` | All containers must declare CPU and memory requests and limits |
+| `k8snonroot.yaml` | `K8sRequireNonRoot` | `runAsNonRoot: true` must be set at pod or container level |
+| `k8sdisallowprivileged.yaml` | `K8sBlockPrivileged` | `securityContext.privileged: true` is blocked |
+| `k8sdisallowedtags.yaml` | `K8sDisallowedTags` | Image tags in the disallowed list (`:latest`) are rejected |
+| `k8sreadonlyrootfs.yaml` | `K8sReadOnlyRootFS` | `readOnlyRootFilesystem: true` must be set |
+| `k8sallowedrepos.yaml` | `K8sAllowedRepos` | Images must come from an allowed registry prefix |
 
-**`constraints/`** — Constraint instances activate the policies against real namespaces:
+**`constraints/`** — Constraint instances activate the policies (Wave 2):
 
 | Constraint | Enforces |
 |---|---|
-| `require-labels.yaml` | All pods must have `app` and `environment` labels |
+| `require-labels.yaml` | All pods in `online-boutique` must have the `app` label |
 | `require-resource-limits.yaml` | All containers must declare `resources.limits` |
 | `require-non-root.yaml` | `runAsNonRoot: true` required on all pods |
 | `disallow-privileged.yaml` | `privileged: true` is blocked cluster-wide |
+| `disallow-latest-tag.yaml` | `:latest` image tag is blocked on all pods |
+| `require-read-only-root-filesystem.yaml` | `readOnlyRootFilesystem: true` required |
+| `allow-ecr-and-trusted-registries-only.yaml` | Only ECR and approved public registries allowed |
 
 #### `falco/`
 
-Falco runs as a DaemonSet on every node and detects runtime threats using eBPF:
+Falco runs as a DaemonSet on every node and detects runtime threats using eBPF.
+Custom detection rules are decoupled from the Helm chart — they live in a
+ConfigMap that Falco hot-reloads via inotify without requiring a pod restart.
 
 | File | Purpose |
 |---|---|
-| `values.yaml` | Helm values: `driver.kind: modern_ebpf`, JSON output, Kubernetes metadata enrichment |
-| `kustomization.yaml` | Kustomize entry for this directory |
+| `kustomization.yaml` | helmCharts block + ConfigMap reference |
+| `values.yaml` | Helm values: `driver.kind: ebpf`, extraVolumes to mount custom rules |
+| `custom-rules/custom-rules.yaml` | ConfigMap with 10 custom detection rules (MITRE-tagged) |
+
+**Custom rules covered:**
+
+| Rule | Priority | MITRE |
+|---|---|---|
+| Shell Spawned in Container | CRITICAL | T1059 |
+| Package Manager Execution | WARNING | T1546 |
+| Sensitive File Read | CRITICAL | T1552 |
+| Unexpected Outbound Connection | NOTICE | T1048 |
+| Write Below Binary Directory | CRITICAL | T1574 |
+| Unexpected Container in Namespace | WARNING | T1190 |
+| Setuid/Setgid Bit Set | CRITICAL | T1548 |
+| Cryptomining Process | CRITICAL | T1496 |
+| Service Account Token Write | CRITICAL | T1528 |
+| Drift — New Binary Executed | WARNING | T1543 |
 
 ### `kustomize/observability/kube-prometheus-stack/`
 
-Deploys the full monitoring stack via the `kube-prometheus-stack` Helm chart (Prometheus + Grafana + Alertmanager + Node Exporter + kube-state-metrics in one release).
+Deploys the full monitoring stack via a single Helm chart release
+(Prometheus + Grafana + Alertmanager + Node Exporter + kube-state-metrics).
 
-| Subdirectory | Contents |
+| Path | Contents |
 |---|---|
-| `values.yaml` | Helm values: retention 7d, gp3 persistent storage, Grafana admin password, service monitor selectors |
-| `dashboards/` | Pre-built Grafana dashboard JSON files, auto-provisioned on startup |
+| `values.yaml` | Helm values: 7d retention, gp3 storage, Grafana admin config, selector flags |
+| `dashboards/` | Grafana dashboard ConfigMaps — auto-provisioned via sidecar |
 | `alerts/` | PrometheusRule manifests for CPU, memory, and pod restart alerts |
-| `servicemonitors/` | ServiceMonitor manifests telling Prometheus which endpoints to scrape |
+| `servicemonitors/` | ServiceMonitor manifests for cluster components and Online Boutique |
 
-**Dashboards included:**
+**Grafana dashboards:**
 
-| File | Dashboard |
+| File | Shows |
 |---|---|
-| `cluster-overview.json` | Node count, pod count, CPU/memory cluster-wide |
-| `node-metrics.json` | Per-node CPU, RAM, disk, network |
-| `application-metrics.json` | Online Boutique request rate, latency, error rate |
+| `cluster-overview.yaml` | Node count, pod count, cluster-wide CPU/memory, restarts per namespace |
+| `node-metrics.yaml` | Per-node CPU%, Memory%, Disk%, Network Rx/Tx |
+| `application-metrics.yaml` | Online Boutique: running pods, restarts, per-service CPU and Memory |
 
-**Alert rules included:**
+**Alert rules:**
 
-| File | Fires when |
-|---|---|
-| `cpu-usage.yaml` | Node CPU > 80% for 5 minutes |
-| `memory-usage.yaml` | Node memory > 85% for 5 minutes |
-| `pod-restarts.yaml` | Pod restarts > 5 times in 1 hour |
+| File | Alerts | Fires when |
+|---|---|---|
+| `cpu-usage.yaml` | `NodeCPUHighWarning`, `NodeCPUHighCritical`, `ContainerCPUThrottling` | CPU > 80%/90% for 5m, throttled > 25% for 10m |
+| `memory-usage.yaml` | `NodeMemoryHighWarning`, `NodeMemoryHighCritical`, `ContainerMemoryNearLimit` | Memory > 85%/95% for 5m, container > 90% limit |
+| `pod-restarts.yaml` | `PodCrashLooping`, `PodCrashLoopingCritical`, `PodNotReady` | > 5/15 restarts in 1h, not ready > 5m |
 
-**ServiceMonitors included:**
+**ServiceMonitors:**
 
 | File | Scrapes |
 |---|---|
-| `servicemonitors/kubernetes.yaml` | kube-apiserver, kubelet, coredns |
-| `servicemonitors/online-boutique.yaml` | All Online Boutique pods via port annotation |
+| `kubernetes.yaml` | kubelet (metrics + cadvisor), CoreDNS |
+| `online-boutique.yaml` | All services in `online-boutique` namespace |
 
 ### `kustomize/applications/online-boutique/`
 
-Base Kubernetes manifests for all 13 microservices. Each service directory contains:
-- `deployment.yaml` — Deployment with health probes, security context, resource limits
-- `service.yaml` — ClusterIP Service
-- `kustomization.yaml` — Kustomize component entry
-
-`frontend/` also includes `ingress.yaml` — creates the AWS ALB via Load Balancer Controller annotations.
+Base Kubernetes manifests for all 13 workloads. Each service directory contains
+a `deployment.yaml`, `service.yaml`, and `kustomization.yaml`. The `frontend/`
+directory also includes `ingress.yaml` which creates the AWS ALB via Load
+Balancer Controller annotations.
 
 **Service map and ports:**
 
@@ -218,9 +257,14 @@ Base Kubernetes manifests for all 13 microservices. Each service directory conta
 | `shoppingassistantservice` | 80 | HTTP | `productcatalogservice:3550` |
 | `loadgenerator` | — | — | `frontend:80` |
 
-> Note: `emailservice` container listens on `8080` but the Service exposes port `5000`. `checkoutservice` calls `emailservice:5000`.
+> `emailservice` container listens on `8080` but the Service exposes port `5000`.
+> `checkoutservice` calls `emailservice:5000`.
 
-**Security applied to every pod:**
+> `redis-cart` uses `runAsUser: 999` (Redis UID) instead of 1000 to avoid
+> permission errors when writing to `/data`.
+
+**Security context applied to every pod:**
+
 ```yaml
 securityContext:
   runAsNonRoot: true
@@ -239,7 +283,7 @@ Overlays patch the base using Kustomize Strategic Merge Patch.
 
 | File | What it does |
 |---|---|
-| `kustomization.yaml` | References base, applies `replicas-patch.yaml` to all Deployments, generates `online-boutique-env` ConfigMap with `ENVIRONMENT=dev` |
+| `kustomization.yaml` | References base, applies patches, generates `online-boutique-env` ConfigMap with `ENVIRONMENT=dev` |
 | `replicas-patch.yaml` | Sets `replicas: 1` on every Deployment — reduces cost in dev |
 | `configmap-patch.yaml` | Placeholder for dev-specific config overrides |
 
@@ -247,7 +291,7 @@ Overlays patch the base using Kustomize Strategic Merge Patch.
 
 | File | What it does |
 |---|---|
-| `kustomization.yaml` | References base, applies both patches, includes `hpa.yaml`, generates ConfigMap with `ENVIRONMENT=prod` |
+| `kustomization.yaml` | References base, applies all patches, includes `hpa.yaml`, generates ConfigMap with `ENVIRONMENT=prod` |
 | `replicas-patch.yaml` | Sets `replicas: 2` on every Deployment — minimum HA |
 | `resource-limits-patch.yaml` | Increases CPU/memory limits for all containers |
 | `hpa.yaml` | HPA for `frontend`, `cartservice`, `checkoutservice`, `productcatalogservice` — scales 2→10 pods at 60% CPU |
@@ -257,22 +301,24 @@ Overlays patch the base using Kustomize Strategic Merge Patch.
 ## Sync Wave Order
 
 ```
-Wave  0  root-app.yaml          discovers all child Applications
+Wave  0  root-app              discovers all child Applications (Terraform-applied)
    │
-Wave  1  platform-services      Metrics Server + AWS LBC must be Running
-   │                            ↳ Without LBC, all Ingress stay Pending forever
+Wave  1  platform-services     Metrics Server + AWS LBC running and healthy
+   │                           ↳ Without LBC, all Ingress stay Pending forever
    │
-Wave  2  security               OPA Gatekeeper webhooks active
-   │                            ↳ All subsequent pods validated against policies
-   │                            Falco eBPF probes loaded on all nodes
+Wave  2  security              OPA Gatekeeper webhooks active
+   │                           ↳ All subsequent pods validated against 7 policies
+   │                           Falco eBPF probes loaded, 10 custom rules active
    │
-Wave  3  observability          Prometheus scraping, Grafana dashboards live
-   │                            ↳ Grafana needs Prometheus datasource to be ready
+Wave  3  observability         Prometheus scraping, Grafana dashboards live
+   │                           ↳ ServiceMonitors pick up Wave 4 pods automatically
    │
-Wave  4  online-boutique        All 13 services deployed
-                                ↳ frontend Ingress → LBC → AWS ALB created
-                                ↳ loadgenerator waits for frontend via initContainer
+Wave  4  online-boutique       13 services deployed via Kustomize dev overlay
+                               ↳ frontend Ingress → LBC → AWS ALB provisioned
+                               ↳ loadgenerator waits for frontend via initContainer
 ```
+
+ArgoCD will not start a wave until all Applications in the previous wave are `Healthy`.
 
 ---
 
@@ -280,32 +326,34 @@ Wave  4  online-boutique        All 13 services deployed
 
 | Namespace | Managed by | Contains |
 |---|---|---|
-| `kube-system` | ArgoCD Wave 0 | Metrics Server, AWS LBC |
-| `gatekeeper-system` | ArgoCD Wave 1 | OPA Gatekeeper controller |
-| `falco` | ArgoCD Wave 1 | Falco DaemonSet |
-| `monitoring` | ArgoCD Wave 2 | Prometheus, Grafana, Alertmanager |
-| `online-boutique` | ArgoCD Wave 3 | All 13 microservices |
-| `argocd` | Terraform (bootstrap) | ArgoCD itself |
+| `argocd` | Terraform bootstrap | ArgoCD itself |
+| `kube-system` | ArgoCD Wave 1 | Metrics Server, AWS LBC |
+| `gatekeeper-system` | ArgoCD Wave 2 | OPA Gatekeeper controller + webhook |
+| `falco` | ArgoCD Wave 2 | Falco DaemonSet + custom rules ConfigMap |
+| `monitoring` | ArgoCD Wave 3 | Prometheus, Grafana, Alertmanager, Node Exporter |
+| `online-boutique` | ArgoCD Wave 4 | All 13 microservices |
 
 ---
 
 ## Useful Commands
 
 ```bash
-# Apply Root App (one-time after terraform apply)
-kubectl apply -f platform/gitops/argocd/root-app.yaml
+# Verify ArgoCD is running after terraform apply
+kubectl get pods -n argocd
 
-# Watch all ArgoCD Applications
-kubectl get applications -n argocd
+# Watch all Applications sync in real time
+kubectl get applications -n argocd -w
 
-# Check sync status of a specific app
+# Check sync status of a specific Application
 kubectl describe application online-boutique -n argocd
 
 # Port-forward ArgoCD UI
 kubectl port-forward svc/argocd-server -n argocd 8080:443
+# Open https://localhost:8080
 
 # Port-forward Grafana
-kubectl port-forward svc/prometheus-grafana -n monitoring 3000:80
+kubectl port-forward svc/kube-prometheus-stack-grafana -n monitoring 3000:80
+# Open http://localhost:3000 (admin / admin)
 
 # Get the ALB URL after online-boutique deploys
 kubectl get ingress frontend -n online-boutique
@@ -313,29 +361,36 @@ kubectl get ingress frontend -n online-boutique
 # View OPA Gatekeeper constraint violations
 kubectl get constraints
 
-# View Falco runtime alerts
-kubectl logs -l app.kubernetes.io/name=falco -n falco --tail=50
+# View Falco runtime alerts (live)
+kubectl logs -l app.kubernetes.io/name=falco -n falco -f
 
 # Verify all pods in online-boutique namespace
 kubectl get pods -n online-boutique
 
 # Force a manual sync
 argocd app sync online-boutique
+
+# Rollback to a previous sync
+argocd app history online-boutique
+argocd app rollback online-boutique <HISTORY_ID>
 ```
 
 ---
 
 ## Before You Push
 
-Replace the `<LBC_ROLE_ARN>` placeholder in `kustomize/platform-services/aws-load-balancer-controller/values.yaml` with the actual ARN from Terraform:
+Replace the `<LBC_ROLE_ARN>` placeholder in
+`kustomize/platform-services/aws-load-balancer-controller/values.yaml`
+with the actual ARN from Terraform:
 
 ```bash
 # Get the value
 terraform -chdir=platform/infrastructure/terraform/environments/dev \
   output -raw lbc_role_arn
 
-# Then edit the file
-# serviceAccount.annotations.eks.amazonaws.com/role-arn: "<paste here>"
+# Edit the values file — replace the placeholder
+# serviceAccount.annotations."eks.amazonaws.com/role-arn": "<paste ARN here>"
 ```
 
-Without this, the AWS Load Balancer Controller pod will start but fail to create ALBs — all Ingress resources will remain in `Pending` state indefinitely.
+Without this, the AWS Load Balancer Controller pod will start but fail to create
+ALBs — all Ingress resources will remain in `Pending` state indefinitely.

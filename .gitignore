@@ -12,8 +12,8 @@
 *.tfstate.backup
 
 # Terraform lock file
-# Giữ lại nếu muốn version provider cố định giữa các môi trường
-# Bỏ comment dòng dưới nếu KHÔNG muốn commit lock file
+# Keep this file if you want to ensure consistent provider versions across all environments.
+# Uncomment the line below if you do NOT want to commit the lock file.
 # .terraform.lock.hcl
 
 # Terraform plan files

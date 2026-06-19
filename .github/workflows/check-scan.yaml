@@ -1,14 +1,14 @@
 name: Security and Compliance Scan
 
 # =============================================================================
-# Quét bảo mật định kỳ hàng ngày + có thể trigger thủ công.
-# Khác terraform-ci (chỉ validate/lint) — file này:
-#   - Gen plan JSON mới nhất từ remote state
-#   - Chạy OPA trên 3 policy files (security/networking/compliance)
-#   - Chạy tfsec deep scan
-#   - Ghi Step Summary + notify Slack
+# Daily scheduled security scan + manual trigger support.
+# Unlike terraform-ci (which only validates/lints), this workflow:
+#   - Generates a fresh plan JSON from remote state
+#   - Runs OPA against 3 policy files (security / networking / compliance)
+#   - Runs tfsec deep scan
+#   - Writes a GitHub Step Summary and sends a Slack notification
 #
-# GitHub Secrets:
+# Required GitHub Secrets:
 #   AWS_DEV_ROLE_ARN, BUCKET_TF_STATE
 #   TF_VAR_DB_PASSWORD, GITOPS_REPO_URL
 #   SLACK_WEBHOOK_URL
@@ -16,12 +16,12 @@ name: Security and Compliance Scan
 
 on:
   # schedule:
-  #   # Hàng ngày 2:00 AM GMT+7 = 19:00 UTC hôm trước
+  #   # Daily at 2:00 AM GMT+7 = 19:00 UTC previous day
   #   - cron: "0 19 * * *"
   workflow_dispatch:
     inputs:
       scan_type:
-        description: "Loại scan cần chạy"
+        description: "Type of scan to run"
         required: true
         default: "all"
         type: choice
@@ -37,7 +37,7 @@ env:
   AWS_REGION: "ap-southeast-1"
 
 # =============================================================================
-# JOB 1: OPA Full Scan — gen plan JSON, chạy tất cả policies
+# JOB 1: OPA Full Scan — generate plan JSON, run all policies
 # =============================================================================
 jobs:
   opa-full-scan:
@@ -104,8 +104,8 @@ jobs:
           chmod +x /usr/local/bin/opa
           opa version
 
-      # ── Security ────────────────────────────────────────────────────────
-      - name: OPA — Security DENY
+      # ========== Security ==========
+      - name: OPA - Security DENY
         id: sec_deny
         working-directory: ${{ github.workspace }}
         run: |
@@ -119,7 +119,7 @@ jobs:
             > ${{ runner.temp }}/sec-deny.txt 2>/dev/null || true
           cat ${{ runner.temp }}/sec-deny.txt | sed 's/^/  [DENY][security] /'
 
-      - name: OPA — Security WARN
+      - name: OPA - Security WARN
         id: sec_warn
         working-directory: ${{ github.workspace }}
         run: |
@@ -134,8 +134,8 @@ jobs:
             > ${{ runner.temp }}/sec-warn.txt 2>/dev/null || true
           cat ${{ runner.temp }}/sec-warn.txt | sed 's/^/  [WARN][security] /'
 
-      # ── Networking ──────────────────────────────────────────────────────
-      - name: OPA — Networking DENY
+      # ========== Networking ==========
+      - name: OPA - Networking DENY
         id: net_deny
         working-directory: ${{ github.workspace }}
         run: |
@@ -149,7 +149,7 @@ jobs:
             > ${{ runner.temp }}/net-deny.txt 2>/dev/null || true
           cat ${{ runner.temp }}/net-deny.txt | sed 's/^/  [DENY][networking] /'
 
-      - name: OPA — Networking WARN
+      - name: OPA - Networking WARN
         id: net_warn
         working-directory: ${{ github.workspace }}
         run: |
@@ -164,8 +164,8 @@ jobs:
             > ${{ runner.temp }}/net-warn.txt 2>/dev/null || true
           cat ${{ runner.temp }}/net-warn.txt | sed 's/^/  [WARN][networking] /'
 
-      # ── Compliance ──────────────────────────────────────────────────────
-      - name: OPA — Compliance DENY (Tagging + Encryption + EKS Logging)
+      # ========== Compliance ==========
+      - name: OPA - Compliance DENY (Tagging + Encryption + EKS Logging)
         id: cmp_deny
         working-directory: ${{ github.workspace }}
         run: |
@@ -179,7 +179,7 @@ jobs:
             > ${{ runner.temp }}/cmp-deny.txt 2>/dev/null || true
           cat ${{ runner.temp }}/cmp-deny.txt | sed 's/^/  [DENY][compliance] /'
 
-      - name: OPA — Compliance WARN
+      - name: OPA - Compliance WARN
         id: cmp_warn
         working-directory: ${{ github.workspace }}
         run: |
@@ -227,13 +227,13 @@ jobs:
           TOTAL=$(( ${SEC:-0} + ${NET:-0} + ${CMP:-0} ))
           echo "Total DENY violations: $TOTAL (security=$SEC networking=$NET compliance=$CMP)"
           if [ "$TOTAL" -gt 0 ]; then
-            echo "❌ OPA scan FAILED: $TOTAL blocking violation(s) found."
+            echo "[FAIL] OPA scan FAILED: $TOTAL blocking violation(s) found."
             exit 1
           fi
-          echo "✅ OPA scan PASSED."
+          echo "[PASS] OPA scan PASSED."
 
 # =============================================================================
-# JOB 2: tfsec Deep Scan — tất cả rules, JSON output
+# JOB 2: tfsec Deep Scan — all rules, JSON output
 # =============================================================================
   tfsec-deep:
     name: tfsec Deep Scan
@@ -305,7 +305,7 @@ jobs:
       - name: Write GitHub Step Summary
         run: |
           {
-            echo "## Security and Compliance Scan — DEV"
+            echo "## Security and Compliance Scan - DEV"
             echo ""
             echo "Scan date: $(date -u '+%Y-%m-%d %H:%M UTC')"
             echo ""
@@ -320,12 +320,12 @@ jobs:
               NET_WARN=$(jq '.networking.warn | length' reports/opa-results.json)
               CMP_DENY=$(jq '.compliance.deny | length' reports/opa-results.json)
               CMP_WARN=$(jq '.compliance.warn | length' reports/opa-results.json)
-              SEC_ICON=$([ "$SEC_DENY" -eq 0 ] && echo "✅" || echo "❌")
-              NET_ICON=$([ "$NET_DENY" -eq 0 ] && echo "✅" || echo "❌")
-              CMP_ICON=$([ "$CMP_DENY" -eq 0 ] && echo "✅" || echo "❌")
-              echo "| $SEC_ICON Security   | $SEC_DENY | $SEC_WARN |"
-              echo "| $NET_ICON Networking | $NET_DENY | $NET_WARN |"
-              echo "| $CMP_ICON Compliance | $CMP_DENY | $CMP_WARN |"
+              SEC_STATUS=$([ "$SEC_DENY" -eq 0 ] && echo "PASS" || echo "FAIL")
+              NET_STATUS=$([ "$NET_DENY" -eq 0 ] && echo "PASS" || echo "FAIL")
+              CMP_STATUS=$([ "$CMP_DENY" -eq 0 ] && echo "PASS" || echo "FAIL")
+              echo "| [$SEC_STATUS] Security   | $SEC_DENY | $SEC_WARN |"
+              echo "| [$NET_STATUS] Networking | $NET_DENY | $NET_WARN |"
+              echo "| [$CMP_STATUS] Compliance | $CMP_DENY | $CMP_WARN |"
             else
               echo "| OPA report not found | - | - |"
             fi
@@ -363,7 +363,11 @@ jobs:
               (needs.opa-full-scan.result == 'success' && needs.tfsec-deep.result == 'success')
               && 'good' || 'danger'
             }}
-          SLACK_TITLE: "Security Scan — DEV ${{ (needs.opa-full-scan.result == 'success' && needs.tfsec-deep.result == 'success') && '✅' || '❌' }}"
+          SLACK_TITLE: >-
+            Security Scan - DEV ${{
+              (needs.opa-full-scan.result == 'success' && needs.tfsec-deep.result == 'success')
+              && '[PASS]' || '[FAIL]'
+            }}
           SLACK_MESSAGE: |
             Run ID   : ${{ github.run_id }}
             OPA Scan : ${{ needs.opa-full-scan.result }}

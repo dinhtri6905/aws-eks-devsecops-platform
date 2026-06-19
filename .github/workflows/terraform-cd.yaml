@@ -1,16 +1,20 @@
 name: Terraform CD
 
 # =============================================================================
-# CD Pipeline: plan → OPA gate → apply (hoặc destroy)
-# Dùng OIDC thay vì static AWS keys — không cần rotate secret.
+# CD Pipeline: plan -> OPA gate -> apply (or destroy)
+# Uses OIDC instead of static AWS keys — no secret rotation needed.
+#
+# Execution Flow:
+#   plan | apply  -->  plan --> opa-gate --> apply --> notify-apply
+#   destroy       -->  destroy --> notify-destroy
 #
 # Trigger:
-#   - Push lên main (tự động plan + apply)
-#   - workflow_dispatch (plan / apply / destroy thủ công)
+#   - Push to main (auto plan + apply)
+#   - workflow_dispatch (manual plan / apply / destroy)
 #
-# GitHub Secrets cần thiết:
-#   AWS_DEV_ROLE_ARN     — IAM Role ARN cho OIDC (dev account)
-#   BUCKET_TF_STATE      — S3 bucket name cho remote state
+# Required GitHub Secrets:
+#   AWS_DEV_ROLE_ARN     — IAM Role ARN for OIDC (dev account)
+#   BUCKET_TF_STATE      — S3 bucket name for remote state
 #   TF_VAR_db_password   — RDS master password
 #   SLACK_WEBHOOK_URL
 # =============================================================================
@@ -23,10 +27,11 @@ on:
   #     - "platform/infrastructure/terraform/environments/dev/**"
   #     - "platform/infrastructure/terraform/modules/**"
   #     - ".github/workflows/terraform-cd.yaml"
+
   workflow_dispatch:
     inputs:
       action:
-        description: "Hành động Terraform"
+        description: "Terraform action"
         required: true
         default: "plan"
         type: choice
@@ -47,7 +52,7 @@ env:
   TF_WORKING_DIR: "platform/infrastructure/terraform/environments/dev"
   AWS_REGION: "ap-southeast-1"
 
-# Chỉ chạy 1 workflow CD tại một thời điểm — tránh concurrent apply
+# Only one CD workflow runs at a time — avoids concurrent applies
 concurrency:
   group: terraform-cd-${{ github.event.inputs.environment || 'dev' }}
   cancel-in-progress: false
@@ -59,11 +64,10 @@ jobs:
   plan:
     name: Terraform Plan
     runs-on: ubuntu-latest
-    environment: dev-plan   # GitHub Environment với required reviewers nếu cần
+    environment: dev-plan   # GitHub Environment, add required reviewers if needed
     permissions:
       contents: read
-      id-token: write       # Bắt buộc cho OIDC
-      pull-requests: write
+      id-token: write       # Required for OIDC
 
     defaults:
       run:
@@ -135,37 +139,19 @@ jobs:
           echo "Terraform plan failed (exit code 1). Check logs above."
           exit 1
 
-      - name: Comment PR — Plan Output
-        if: github.event_name == 'pull_request'
-        uses: actions/github-script@v7
-        with:
-          script: |
-            const fs   = require('fs');
-            const plan = fs.readFileSync('${{ runner.temp }}/tf-plan.txt', 'utf8');
-            const max  = 60000;
-            const body = plan.length > max
-              ? plan.substring(0, max) + '\n\n_...truncated — see workflow logs_'
-              : plan;
-
-            github.rest.issues.createComment({
-              issue_number: context.issue.number,
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              body: `## Terraform Plan [DEV]\n\n\`\`\`hcl\n${body}\n\`\`\``
-            });
-
 # =============================================================================
-# JOB 2: OPA Gate — block apply nếu có deny violations
+# JOB 2: OPA Gate — blocks apply if there are deny violations
 # =============================================================================
   opa-gate:
     name: OPA Policy Gate
     runs-on: ubuntu-latest
     needs: plan
-    # Chỉ chạy OPA gate nếu plan có changes (exitcode=2) hoặc exitcode=0
-    if: needs.plan.outputs.plan_exitcode != '1'
+    # Only runs when the plan actually has changes (exitcode=2). exitcode=0
+    # means there is nothing to apply, so the policy check would be wasted.
+    if: needs.plan.outputs.plan_exitcode == '2'
 
     steps:
-      - name: Checkout code (để lấy policies/)
+      - name: Checkout code (needed for policies/)
         uses: actions/checkout@v4
 
       - name: Download plan artifact
@@ -241,10 +227,10 @@ jobs:
           TOTAL=$(( ${SEC:-0} + ${NET:-0} + ${CMP:-0} ))
           echo "OPA deny violations — security: $SEC, networking: $NET, compliance: $CMP, total: $TOTAL"
           if [ "$TOTAL" -gt 0 ]; then
-            echo "❌ OPA gate FAILED: $TOTAL deny violation(s) found. Fix before applying."
+            echo "[FAIL] OPA gate failed: $TOTAL deny violation(s) found. Fix before applying."
             exit 1
           fi
-          echo "✅ OPA gate PASSED: no deny violations."
+          echo "[OK] OPA gate passed: no deny violations."
 
 # =============================================================================
 # JOB 3: Terraform Apply
@@ -253,16 +239,19 @@ jobs:
     name: Terraform Apply
     runs-on: ubuntu-latest
     needs: [plan, opa-gate]
-    # Apply chỉ chạy:
-    #   - Auto: push to main khi có changes (exitcode=2)
-    #   - Manual: workflow_dispatch với action=apply
+    # Apply only runs when:
+    #   - Auto: push to main with real plan changes (exitcode=2)
+    #   - Manual: workflow_dispatch with action=apply
+    # opa-gate is allowed to be 'success' or 'skipped': it is skipped whenever
+    # plan_exitcode is not '2' (no changes), which is a valid no-op apply on
+    # manual dispatch, not a gate failure.
     if: |
-      needs.opa-gate.result == 'success' &&
+      (needs.opa-gate.result == 'success' || needs.opa-gate.result == 'skipped') &&
       (
         (github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.plan.outputs.plan_exitcode == '2') ||
         (github.event_name == 'workflow_dispatch' && github.event.inputs.action == 'apply')
       )
-    environment: dev-apply   # GitHub Environment — thêm required reviewers ở đây cho prod
+    environment: dev-apply   # GitHub Environment — add required reviewers here for prod
     permissions:
       contents: read
       id-token: write
@@ -271,6 +260,9 @@ jobs:
       run:
         shell: bash
         working-directory: ${{ env.TF_WORKING_DIR }}
+
+    outputs:
+      apply_status: ${{ job.status }}
 
     steps:
       - name: Checkout code
@@ -314,22 +306,31 @@ jobs:
           echo "=== Terraform Outputs ==="
           cat ${{ runner.temp }}/tf-outputs.json | jq 'to_entries[] | "\(.key): \(.value.value)"' -r
 
+# =============================================================================
+# JOB 4: Notify — Apply Result (separate job per execution flow)
+# =============================================================================
+  notify-apply:
+    name: Notify — Apply Result
+    runs-on: ubuntu-latest
+    needs: apply
+    if: always() && needs.apply.result != 'skipped'
+
+    steps:
       - name: Notify Slack — Apply Result
-        if: always()
         uses: rtCamp/action-slack-notify@v2
         env:
           SLACK_WEBHOOK: ${{ secrets.SLACK_WEBHOOK_URL }}
-          SLACK_COLOR: ${{ job.status == 'success' && 'good' || 'danger' }}
-          SLACK_TITLE: "Terraform Apply — DEV ${{ job.status == 'success' && '✅' || '❌' }}"
+          SLACK_COLOR: ${{ needs.apply.result == 'success' && 'good' || 'danger' }}
+          SLACK_TITLE: "Terraform Apply — DEV ${{ needs.apply.result == 'success' && '[PASS]' || '[FAIL]' }}"
           SLACK_MESSAGE: |
             Actor  : ${{ github.actor }}
             Commit : ${{ github.sha }}
-            Status : ${{ job.status }}
+            Status : ${{ needs.apply.result }}
             Run    : ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
           SLACK_FOOTER: "EKS DevSecOps Platform | Terraform CD"
 
 # =============================================================================
-# JOB 4: Terraform Destroy (manual only — requires explicit dispatch)
+# JOB 5: Terraform Destroy (manual only — requires explicit dispatch)
 # =============================================================================
   destroy:
     name: Terraform Destroy
@@ -337,7 +338,7 @@ jobs:
     if: |
       github.event_name == 'workflow_dispatch' &&
       github.event.inputs.action == 'destroy'
-    environment: dev-destroy   # Thêm required reviewers bắt buộc cho job này
+    environment: dev-destroy   # Required reviewers should be mandatory on this job
     permissions:
       contents: read
       id-token: write
@@ -346,6 +347,9 @@ jobs:
       run:
         shell: bash
         working-directory: ${{ env.TF_WORKING_DIR }}
+
+    outputs:
+      destroy_status: ${{ job.status }}
 
     steps:
       - name: Checkout code
@@ -382,14 +386,24 @@ jobs:
           TF_VAR_db_password: ${{ secrets.TF_VAR_DB_PASSWORD }}
           TF_VAR_gitops_repo_url: ${{ secrets.GITOPS_REPO_URL }}
 
+# =============================================================================
+# JOB 6: Notify — Destroy Result (separate job per execution flow)
+# =============================================================================
+  notify-destroy:
+    name: Notify — Destroy Result
+    runs-on: ubuntu-latest
+    needs: destroy
+    if: always() && needs.destroy.result != 'skipped'
+
+    steps:
       - name: Notify Slack — Destroy
-        if: always()
         uses: rtCamp/action-slack-notify@v2
         env:
           SLACK_WEBHOOK: ${{ secrets.SLACK_WEBHOOK_URL }}
-          SLACK_COLOR: ${{ job.status == 'success' && 'warning' || 'danger' }}
-          SLACK_TITLE: "⚠️ Terraform DESTROY — DEV"
+          SLACK_COLOR: ${{ needs.destroy.result == 'success' && 'warning' || 'danger' }}
+          SLACK_TITLE: "Terraform DESTROY — DEV"
           SLACK_MESSAGE: |
             Actor  : ${{ github.actor }}
-            Status : ${{ job.status }}
+            Status : ${{ needs.destroy.result }}
             Run    : ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          SLACK_FOOTER: "EKS DevSecOps Platform | Terraform CD"

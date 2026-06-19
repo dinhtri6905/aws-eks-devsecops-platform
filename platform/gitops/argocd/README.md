@@ -4,8 +4,9 @@ ArgoCD configuration for the Cloud-Native Secure GitOps Platform on AWS EKS.
 
 This directory implements the **App of Apps** pattern — a single Root Application
 watches this directory and automatically creates, updates, and deletes all child
-Applications based on what exists in `applications/`. One `kubectl apply` is all
-it takes to bring the entire platform to life.
+Applications based on what exists in `applications/`. Terraform bootstraps ArgoCD
+and applies the Root Application automatically — no manual steps required after
+`terraform apply`.
 
 ---
 
@@ -33,7 +34,7 @@ it takes to bring the entire platform to life.
 
 ```
 argocd/
-├── root-app.yaml               # Entrypoint — apply this once after terraform apply
+├── root-app.yaml               # Entrypoint — applied automatically by Terraform argocd-bootstrap module
 │
 ├── projects/
 │   └── platform.yaml           # AppProject: RBAC, allowed repos, allowed namespaces
@@ -52,9 +53,12 @@ argocd/
 ```
 terraform apply
       │
-      └── ArgoCD bootstrapped on EKS cluster (via Helm)
-            │
-            └── kubectl apply -f argocd/root-app.yaml   ← one-time manual step
+      ├── EKS cluster provisioned
+      │
+      └── argocd-bootstrap module
+            ├── Installs ArgoCD via Helm
+            ├── Applies AppProject (projects/platform.yaml)
+            └── Applies Root Application (root-app.yaml)
                         │
                         │  root-app watches argocd/applications/
                         │  and creates 4 child Applications
@@ -63,7 +67,7 @@ terraform apply
                         │            Metrics Server, AWS Load Balancer Controller
                         │            (ALB ready before Ingress resources are applied)
                         │
-                        ├── Wave 2 ── security           →  security / gatekeeper-system / falco
+                        ├── Wave 2 ── security           →  gatekeeper-system / falco
                         │            OPA Gatekeeper (admission control)
                         │            Falco (runtime threat detection)
                         │            (policies active before app workloads deploy)
@@ -85,38 +89,26 @@ directly to the cluster back to what is in Git.
 
 ## Getting Started
 
-### Prerequisites
+ArgoCD and the Root Application are bootstrapped automatically by the
+`terraform/modules/argocd-bootstrap` module during `terraform apply`.
+No manual steps are required after the infrastructure is provisioned.
 
-- EKS cluster running (Terraform applied)
-- ArgoCD installed on the cluster (bootstrapped by Terraform Helm provider)
-- `kubectl` configured to point at the cluster
-- AppProject applied before the Root App
-
-### Step 1 — Apply the AppProject
+After `terraform apply` completes, verify the platform is running:
 
 ```bash
-kubectl apply -f platform/gitops/argocd/projects/platform.yaml
-```
+# Update kubeconfig
+aws eks update-kubeconfig --region ap-southeast-1 --name eks-devsecops-dev-cluster
 
-### Step 2 — Apply the Root Application
+# Verify ArgoCD is running
+kubectl get pods -n argocd
 
-```bash
-kubectl apply -f platform/gitops/argocd/root-app.yaml
-```
+# Verify Root App was applied
+kubectl get application root-app -n argocd
 
-That is the only manual step. ArgoCD takes over from here and deploys all four
-child Applications in sync wave order.
-
-### Step 3 — Monitor progress
-
-```bash
-# Watch all Applications
+# Watch all child Applications being created and synced
 kubectl get applications -n argocd -w
 
-# Or use the ArgoCD CLI
-argocd app list
-
-# Port-forward the UI
+# Port-forward the ArgoCD UI
 kubectl port-forward svc/argocd-server -n argocd 8080:443
 # Open https://localhost:8080
 ```
@@ -165,7 +157,7 @@ project's rules.
 | Setting | Value | Purpose |
 |---|---|---|
 | `sourceRepos` | `github.com/dinhtri6905/aws-eks-devsecops-platform.git` | Only this repo is trusted as a source |
-| `destinations` | `argocd`, `kube-system`, `monitoring`, `security`, `online-boutique` | Deployments restricted to these namespaces |
+| `destinations` | `argocd`, `kube-system`, `monitoring`, `gatekeeper-system`, `falco`, `online-boutique` | Deployments restricted to these namespaces |
 | `clusterResourceWhitelist` | `*/*` | Allows cluster-scoped resources (CRDs, ClusterRoles, IngressClass) |
 | `orphanedResources.warn` | `true` | ArgoCD warns if cluster has resources not tracked in Git |
 
@@ -216,7 +208,7 @@ This must be filled before pushing to Git.
 |---|---|
 | Sync wave | `2` |
 | Source path | `platform/gitops/kustomize/security` |
-| Destination namespace | `security` |
+| Destination namespace | `gatekeeper-system` / `falco` |
 | Deploys | OPA Gatekeeper, Falco |
 
 **Why Wave 2 runs before observability and applications:**
@@ -233,7 +225,7 @@ admission time.
 ignoreDifferences:
   - kind: ValidatingWebhookConfiguration
     jsonPointers:
-      - /webhooks/0/clientConfig/caBundle   # injected at runtime by cert-manager
+      - /webhooks/0/clientConfig/caBundle   # injected at runtime by Gatekeeper
       - /webhooks/1/clientConfig/caBundle
   - kind: MutatingWebhookConfiguration
     jsonPointers:
@@ -271,10 +263,10 @@ large and exceed the annotation size limit of client-side apply.
 ignoreDifferences:
   - kind: StatefulSet
     jsonPointers:
-      - /spec/volumeClaimTemplates   # Prometheus operator patches this at runtime
+      - /spec/volumeClaimTemplates   # Prometheus Operator patches this at runtime
   - kind: ServiceMonitor
     jsonPointers:
-      - /spec/endpoints              # operator normalises endpoint fields at runtime
+      - /spec/endpoints              # Operator normalises endpoint fields at runtime
 ```
 
 Without these, ArgoCD would report the Application as `OutOfSync` on every
@@ -351,7 +343,7 @@ these Applications as `OutOfSync`.
 
 | Application | Resource | Field | Why it changes at runtime |
 |---|---|---|---|
-| `security` | `ValidatingWebhookConfiguration` | `/webhooks/*/clientConfig/caBundle` | Gatekeeper cert-manager injects CA bundle |
+| `security` | `ValidatingWebhookConfiguration` | `/webhooks/*/clientConfig/caBundle` | Gatekeeper injects CA bundle at startup |
 | `security` | `MutatingWebhookConfiguration` | `/webhooks/0/clientConfig/caBundle` | Same as above |
 | `observability` | `StatefulSet` | `/spec/volumeClaimTemplates` | Prometheus Operator patches VCT spec |
 | `observability` | `ServiceMonitor` | `/spec/endpoints` | Prometheus Operator normalises endpoint fields |
@@ -376,14 +368,18 @@ configure ArgoCD's `argocd-cm` ConfigMap with the OIDC/Dex connector.
 ## Useful Commands
 
 ```bash
-# Apply the AppProject (run before root-app)
-kubectl apply -f platform/gitops/argocd/projects/platform.yaml
+# Verify ArgoCD is running after terraform apply
+kubectl get pods -n argocd
 
-# Bootstrap the entire platform (run once)
-kubectl apply -f platform/gitops/argocd/root-app.yaml
+# Verify Root App was applied
+kubectl get application root-app -n argocd
 
 # Watch all Applications and their sync status
-kubectl get applications -n argocd
+kubectl get applications -n argocd -w
+
+# Port-forward ArgoCD UI
+kubectl port-forward svc/argocd-server -n argocd 8080:443
+# Open https://localhost:8080
 
 # Get detailed status of a specific Application
 argocd app get online-boutique
@@ -412,7 +408,4 @@ argocd app get online-boutique --refresh
 
 # Delete an Application without pruning its resources
 argocd app delete online-boutique --cascade=false
-
-# Port-forward ArgoCD UI
-kubectl port-forward svc/argocd-server -n argocd 8080:443
 ```
