@@ -1,13 +1,13 @@
 name: Terraform CI
 
 # =============================================================================
-# Chạy trên push lên develop/feature và Pull Request vào develop.
-# Không cần AWS credentials — tất cả bước dùng -backend=false.
+# Runs on push to develop/feature branches and Pull Requests targeting develop.
+# No AWS credentials required — all steps use -backend=false.
 #
 # Jobs:
-#   validate → (tflint, tfsec, checkov) song song → ci-summary
+#   validate -> (tflint, tfsec, checkov) in parallel -> ci-summary
 #
-# GitHub Secrets cần thiết:
+# Required GitHub Secrets:
 #   SLACK_WEBHOOK_URL
 # =============================================================================
 
@@ -29,10 +29,11 @@ on:
   #     - "platform/infrastructure/terraform/modules/**"
   #     - "platform/infrastructure/terraform/policies/**"
   #     - ".github/workflows/terraform-ci.yaml"
+  
   workflow_dispatch:
     inputs:
       scan_type:
-        description: "Chọn loại scan muốn chạy"
+        description: "Select which scan to run"
         required: true
         default: "all"
         type: choice
@@ -46,7 +47,7 @@ on:
 env:
   TF_VERSION: "1.10.0"
   TF_WORKING_DIR: "platform/infrastructure/terraform/environments/dev"
-  # Feature branch → soft_fail = true, không block CI
+  # Feature branches use soft_fail=true so they do not block CI
   SOFT_FAIL: ${{ startsWith(github.ref, 'refs/heads/feature/') }}
 
 # =============================================================================
@@ -87,7 +88,7 @@ jobs:
         id: validate
         run: terraform validate -no-color
 
-      - name: Comment PR — Validate Results
+      - name: Comment PR - Validate Results
         if: github.event_name == 'pull_request' && always()
         uses: actions/github-script@v7
         with:
@@ -95,7 +96,7 @@ jobs:
             const fmt      = '${{ steps.fmt.outcome }}';
             const init     = '${{ steps.init.outcome }}';
             const validate = '${{ steps.validate.outcome }}';
-            const icon     = s => s === 'success' ? '✅' : '❌';
+            const status   = s => s === 'success' ? 'PASS' : 'FAIL';
             const allPass  = [fmt, init, validate].every(s => s === 'success');
 
             github.rest.issues.createComment({
@@ -103,20 +104,20 @@ jobs:
               owner: context.repo.owner,
               repo: context.repo.repo,
               body: [
-                `## Terraform Validate [DEV] — ${allPass ? '✅ ALL PASSED' : '❌ FAILED'}`,
+                `## Terraform Validate [DEV] - ${allPass ? 'ALL PASSED' : 'FAILED'}`,
                 '',
                 '| Step | Result |',
                 '|------|--------|',
-                `| fmt      | ${icon(fmt)} \`${fmt}\` |`,
-                `| init     | ${icon(init)} \`${init}\` |`,
-                `| validate | ${icon(validate)} \`${validate}\` |`,
+                `| fmt      | ${status(fmt)} |`,
+                `| init     | ${status(init)} |`,
+                `| validate | ${status(validate)} |`,
                 '',
                 `Commit: \`${{ github.sha }}\` | Branch: \`${{ github.head_ref }}\``
               ].join('\n')
             });
 
 # =============================================================================
-# JOB 2: TFLint — AWS best practices + naming + required providers
+# JOB 2: TFLint - AWS best practices + naming conventions + required providers
 # =============================================================================
   tflint:
     name: TFLint Analysis
@@ -165,7 +166,6 @@ jobs:
         run: |
           tflint --format json --recursive \
             > ${{ runner.temp }}/tflint-report.json || true
-          # Human-readable summary in logs
           tflint --format compact --recursive || true
 
       - name: Upload TFLint report
@@ -176,7 +176,7 @@ jobs:
           path: ${{ runner.temp }}/tflint-report.json
           retention-days: 7
 
-      - name: Comment PR — TFLint Results
+      - name: Comment PR - TFLint Results
         if: github.event_name == 'pull_request'
         uses: actions/github-script@v7
         with:
@@ -185,19 +185,19 @@ jobs:
             const raw  = fs.readFileSync('${{ runner.temp }}/tflint-report.json', 'utf8');
             const data = JSON.parse(raw);
             const issues = data.issues || [];
-            const icon = s => s === 'error' ? '❌' : s === 'warning' ? '⚠️' : 'ℹ️';
+            const severity = s => s === 'error' ? 'ERROR' : s === 'warning' ? 'WARNING' : 'INFO';
 
             let body = `## TFLint Analysis [DEV]\n\n`;
             if (issues.length === 0) {
-              body += '✅ No linting issues found.';
+              body += 'No linting issues found.';
             } else {
               body += `Found **${issues.length}** issue(s)\n\n`;
               issues.slice(0, 10).forEach((issue, i) => {
-                body += `${i+1}. ${icon(issue.rule.severity)} **${issue.rule.name}** \`${issue.rule.severity}\`\n`;
-                body += `   \`${issue.range.filename}:${issue.range.start.line}\` — ${issue.message}\n\n`;
+                body += `${i+1}. [${severity(issue.rule.severity)}] **${issue.rule.name}**\n`;
+                body += `   \`${issue.range.filename}:${issue.range.start.line}\` - ${issue.message}\n\n`;
               });
               if (issues.length > 10) {
-                body += `_...and ${issues.length - 10} more — see artifact: tflint-report_`;
+                body += `_...and ${issues.length - 10} more - see artifact: tflint-report_`;
               }
             }
 
@@ -209,7 +209,7 @@ jobs:
             });
 
 # =============================================================================
-# JOB 3: tfsec — IaC security scanning
+# JOB 3: tfsec - Infrastructure-as-Code security scanning
 # =============================================================================
   tfsec:
     name: tfsec Security Scan
@@ -232,7 +232,7 @@ jobs:
           soft_fail: ${{ env.SOFT_FAIL }}
           additional_args: "--exclude-downloaded-modules --no-color"
 
-      - name: Run tfsec (JSON for artifact)
+      - name: Run tfsec (JSON output for artifact)
         if: always()
         run: |
           docker run --rm \
@@ -252,8 +252,8 @@ jobs:
           retention-days: 7
 
 # =============================================================================
-# JOB 4: Checkov — CIS compliance + security misconfiguration
-# SARIF được upload lên GitHub Security tab.
+# JOB 4: Checkov - CIS compliance and security misconfiguration checks
+# SARIF output is uploaded to the GitHub Security tab.
 # =============================================================================
   checkov:
     name: Checkov Compliance Scan
@@ -285,7 +285,7 @@ jobs:
           output_file_path: reports/checkov.sarif
           soft_fail: ${{ env.SOFT_FAIL }}
           quiet: false
-          # Bỏ qua một số check không liên quan đến EKS dev environment
+          # Skip checks not applicable to this EKS dev environment
           skip_check: >
             CKV_AWS_8,
             CKV2_AWS_12
@@ -305,7 +305,7 @@ jobs:
           path: reports/checkov.sarif
           retention-days: 7
 
-      - name: Comment PR — Checkov Results
+      - name: Comment PR - Checkov Results
         if: github.event_name == 'pull_request'
         uses: actions/github-script@v7
         with:
@@ -319,7 +319,7 @@ jobs:
             body += `**Total issues:** ${issues.length} | **HIGH/CRITICAL:** ${critical.length}\n\n`;
 
             if (issues.length === 0) {
-              body += '✅ No security issues found.';
+              body += 'No security issues found.';
             } else {
               body += '| Check | Severity | File |\n|-------|----------|------|\n';
               issues.slice(0, 8).forEach(r => {
@@ -327,7 +327,7 @@ jobs:
                 body += `| \`${r.ruleId}\` | ${r.properties?.severity || '-'} | \`${loc}\` |\n`;
               });
               if (issues.length > 8) {
-                body += `\n_...and ${issues.length - 8} more — see GitHub Security tab or artifact: checkov-report_`;
+                body += `\n_...and ${issues.length - 8} more - see GitHub Security tab or artifact: checkov-report_`;
               }
             }
 
@@ -339,7 +339,7 @@ jobs:
             });
 
 # =============================================================================
-# JOB 5: CI Summary — tổng hợp kết quả, comment PR, notify Slack
+# JOB 5: CI Summary - aggregate results, comment on PR, notify Slack
 # =============================================================================
   ci-summary:
     name: CI Summary
@@ -359,7 +359,7 @@ jobs:
       - name: Write GitHub Step Summary
         run: |
           {
-            echo "## Terraform CI Summary — DEV"
+            echo "## Terraform CI Summary - DEV"
             echo ""
             echo "| Job | Result |"
             echo "|-----|--------|"
@@ -371,13 +371,13 @@ jobs:
             echo "Branch: \`${{ github.ref_name }}\` | Commit: \`${{ github.sha }}\`"
           } >> $GITHUB_STEP_SUMMARY
 
-      - name: Comment PR — CI Summary
+      - name: Comment PR - CI Summary
         if: github.event_name == 'pull_request'
         uses: actions/github-script@v7
         with:
           script: |
             const fs = require('fs');
-            const icon = s => s === 'success' ? '✅' : s === 'failure' ? '❌' : s === 'skipped' ? '⏭️' : '⚠️';
+            const status = s => s === 'success' ? 'PASS' : s === 'failure' ? 'FAIL' : s === 'skipped' ? 'SKIPPED' : 'CANCELLED';
             const jobs = {
               validate: '${{ needs.validate.result }}',
               tflint:   '${{ needs.tflint.result }}',
@@ -386,10 +386,10 @@ jobs:
             };
             const allPass = Object.values(jobs).every(v => v === 'success' || v === 'skipped');
 
-            let body = `## Terraform CI [DEV] — ${allPass ? '✅ ALL PASSED' : '❌ ACTION REQUIRED'}\n\n`;
+            let body = `## Terraform CI [DEV] - ${allPass ? 'ALL PASSED' : 'ACTION REQUIRED'}\n\n`;
             body += '| Job | Result |\n|-----|--------|\n';
             for (const [job, result] of Object.entries(jobs)) {
-              body += `| ${job.padEnd(8)} | ${icon(result)} \`${result}\` |\n`;
+              body += `| ${job.padEnd(8)} | ${status(result)} |\n`;
             }
 
             if (fs.existsSync('./reports/tflint-report.json')) {
@@ -422,7 +422,7 @@ jobs:
                needs.checkov.result == 'success')
               && 'good' || 'danger'
             }}
-          SLACK_TITLE: "Terraform CI — DEV"
+          SLACK_TITLE: "Terraform CI - DEV"
           SLACK_MESSAGE: |
             Branch   : ${{ github.ref_name }}
             Commit   : ${{ github.sha }}
