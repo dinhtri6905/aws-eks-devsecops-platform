@@ -43,7 +43,7 @@ output "kms_key_arn" {
 }
 
 # ============================================================
-# Output backend config nếu thích
+# Output backend config if like
 # ============================================================
 # output "backend_configuration" {
 #   description = "Terraform backend configuration"

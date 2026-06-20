@@ -502,9 +502,6 @@ Note the outputs, then configure `environments/dev/backend.tf` with the bucket n
 ```bash
 cd platform/infrastructure/terraform/environments/dev
 
-export TF_VAR_db_password="<your-secure-password>"
-export TF_VAR_gitops_repo_url="https://github.com/<org>/aws-eks-devsecops-platform"
-
 terraform init
 terraform plan
 terraform apply

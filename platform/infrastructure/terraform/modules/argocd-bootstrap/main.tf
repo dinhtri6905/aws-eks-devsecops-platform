@@ -5,9 +5,9 @@
 # Resource creation order (enforced by depends_on):
 #
 #   ① kubernetes_namespace "argocd"
-#       └── ② helm_release "argocd"          (argo-cd chart)
-#               ├── ③ kubernetes_secret       (git repo credentials — optional)
-#               └── ④ helm_release "root_app" (argocd-apps chart → Root Application)
+#       └── ② helm_release "argocd"              (argo-cd chart)
+#               ├── ③ kubernetes_secret           (git repo credentials — optional)
+#               └── ④ kubernetes_manifest "root_app" (Application CRD → Root Application)
 #
 # The Root Application (App of Apps) points at your GitOps repo.
 # ArgoCD then takes over and continuously syncs everything else from Git.
@@ -75,7 +75,7 @@ resource "helm_release" "argocd" {
 
         params = {
           # ALB handles TLS — ArgoCD server runs plain HTTP internally
-          "server.insecure" = tostring(var.argocd_server_insecure)
+          "server.insecure"       = tostring(var.argocd_server_insecure)
           "kustomize.enable-helm" = "true"
         }
 
@@ -204,8 +204,17 @@ resource "kubernetes_secret" "argocd_repo" {
 # ============================================================
 # ROOT APPLICATION — App of Apps pattern
 # ============================================================
-# Uses the official "argocd-apps" Helm chart to create an ArgoCD Application
-# resource. This avoids the need for a kubectl/manifest provider.
+# Creates the ArgoCD Application CRD directly via the Kubernetes provider,
+# bypassing the "argocd-apps" Helm chart.
+#
+# NOTE: The "argocd-apps" chart (tested on 2.0.2 and 2.0.5) has a confirmed
+# bug where the rendered manifest fails Kubernetes API submission with:
+#   "unable to decode: json: cannot unmarshal number into Go struct field
+#    ObjectMeta.metadata.name of type string"
+# This occurs even when all values (including retry.limit/retry.backoff.factor)
+# are explicitly passed as quoted strings — confirmed via TF_LOG=DEBUG showing
+# a fully valid, all-string values.yaml still failing at chart render time.
+# Using kubernetes_manifest avoids the chart's Go template layer entirely.
 #
 # The Root App points at: gitops_repo_url / gitops_root_app_path
 # That directory contains individual Application YAMLs for every platform
@@ -213,71 +222,58 @@ resource "kubernetes_secret" "argocd_repo" {
 #
 # ArgoCD then continuously syncs those Applications from Git — fully automated.
 # ============================================================
-resource "helm_release" "argocd_root_app" {
-  name       = "${local.name_prefix}-root-app"
-  repository = "https://argoproj.github.io/argo-helm"
-  chart      = "argocd-apps"
-  version    = var.argocd_apps_chart_version
-  namespace  = kubernetes_namespace.argocd.metadata[0].name
+resource "kubernetes_manifest" "argocd_root_app" {
+  manifest = {
+    apiVersion = "argoproj.io/v1alpha1"
+    kind       = "Application"
 
-  timeout = 120
+    metadata = {
+      name      = "${local.name_prefix}-root"
+      namespace = var.argocd_namespace
+      finalizers = [
+        "resources-finalizer.argocd.argoproj.io"
+      ]
+    }
 
-  # wait=false: the Application is created but ArgoCD syncs it asynchronously
-  wait            = false
-  atomic          = false
-  cleanup_on_fail = false
+    spec = {
+      project = var.argocd_project_name
 
-  values = [
-    yamlencode({
-      applications = [
-        {
-          name      = "${local.name_prefix}-root"
-          namespace = var.argocd_namespace
-          project   = var.argocd_project_name
+      source = {
+        repoURL        = var.gitops_repo_url
+        targetRevision = var.gitops_repo_branch
+        path           = var.gitops_root_app_path
+      }
 
-          # Finalizer ensures child apps are cleaned up when root app is deleted
-          finalizers = ["resources-finalizer.argocd.argoproj.io"]
+      destination = {
+        server    = "https://kubernetes.default.svc"
+        namespace = var.argocd_namespace
+      }
 
-          source = {
-            repoURL        = var.gitops_repo_url
-            targetRevision = var.gitops_repo_branch
-            path           = var.gitops_root_app_path
-          }
+      syncPolicy = {
+        automated = {
+          prune    = true
+          selfHeal = true
+        }
 
-          destination = {
-            server    = "https://kubernetes.default.svc"
-            namespace = var.argocd_namespace
-          }
+        syncOptions = [
+          "CreateNamespace=true",
+          "PrunePropagationPolicy=foreground",
+          "PruneLast=true",
+          "ServerSideApply=true",
+        ]
 
-          syncPolicy = {
-            # Fully automated — ArgoCD will prune removed resources and self-heal drift
-            automated = {
-              prune    = true
-              selfHeal = true
-            }
-
-            syncOptions = [
-              "CreateNamespace=true", # auto-create namespaces for child apps
-              "PrunePropagationPolicy=foreground",
-              "PruneLast=true", # prune only after all resources are healthy
-              "ServerSideApply=true",
-            ]
-
-            # Exponential backoff retry — avoids hammering the API server on failures
-            retry = {
-              limit = 5
-              backoff = {
-                duration    = "5s"
-                factor      = 2
-                maxDuration = "3m"
-              }
-            }
+        retry = {
+          limit = "5"
+          backoff = {
+            duration    = "5s"
+            factor      = 2
+            maxDuration = "3m"
           }
         }
-      ]
-    })
-  ]
+      }
+    }
+  }
 
-  # Root App can only be created after ArgoCD (and CRDs) are installed
+  # Root App can only be created after ArgoCD (and its CRDs) are installed
   depends_on = [helm_release.argocd]
 }
