@@ -1,0 +1,65 @@
+# ============================================================
+# recommendationservice-netpol
+#
+# Ingress:
+#   - frontend   → recommendationservice:8080
+#   - Prometheus → :8080/metrics
+#
+# Egress:
+#   - → productcatalogservice:3550
+#   - → CoreDNS:53
+# ============================================================
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: recommendationservice-netpol
+  namespace: online-boutique
+  annotations:
+    argocd.argoproj.io/sync-wave: "2"
+spec:
+  podSelector:
+    matchLabels:
+      app: recommendationservice
+  policyTypes:
+    - Ingress
+    - Egress
+
+  ingress:
+    # frontend → recommendationservice
+    - from:
+        - podSelector:
+            matchLabels:
+              app: frontend
+      ports:
+        - port: 8080
+          protocol: TCP
+
+    # Prometheus scrape
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: monitoring
+      ports:
+        - port: 8080
+          protocol: TCP
+
+  egress:
+    # CoreDNS
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+      ports:
+        - port: 53
+          protocol: UDP
+        - port: 53
+          protocol: TCP
+
+    # → productcatalogservice
+    - to:
+        - podSelector:
+            matchLabels:
+              app: productcatalogservice
+      ports:
+        - port: 3550
+          protocol: TCP

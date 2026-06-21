@@ -1,0 +1,75 @@
+# ============================================================
+# shoppingassistantservice-netpol
+#
+# Ingress:
+#   - frontend   → shoppingassistantservice:80
+#   - Prometheus → :80/metrics
+#
+# Egress:
+#   - → productcatalogservice:3550
+#   - → CoreDNS:53
+#   - → Internet:443 (gọi LLM API bên ngoài nếu có)
+#
+# NOTE: shoppingassistantservice gọi external LLM API (vd: Vertex AI,
+# OpenAI). Nếu đã có VPC endpoint hoặc private link, thay egress :443
+# bằng ipBlock tương ứng thay vì mở rộng ra toàn internet.
+# ============================================================
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: shoppingassistantservice-netpol
+  namespace: online-boutique
+  annotations:
+    argocd.argoproj.io/sync-wave: "2"
+spec:
+  podSelector:
+    matchLabels:
+      app: shoppingassistantservice
+  policyTypes:
+    - Ingress
+    - Egress
+
+  ingress:
+    # frontend → shoppingassistantservice
+    - from:
+        - podSelector:
+            matchLabels:
+              app: frontend
+      ports:
+        - port: 80
+          protocol: TCP
+
+    # Prometheus scrape
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: monitoring
+      ports:
+        - port: 80
+          protocol: TCP
+
+  egress:
+    # CoreDNS
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+      ports:
+        - port: 53
+          protocol: UDP
+        - port: 53
+          protocol: TCP
+
+    # → productcatalogservice
+    - to:
+        - podSelector:
+            matchLabels:
+              app: productcatalogservice
+      ports:
+        - port: 3550
+          protocol: TCP
+
+    # Egress ra internet cho external LLM API calls
+    - ports:
+        - port: 443
+          protocol: TCP

@@ -1,0 +1,51 @@
+# ============================================================
+# loadgenerator-netpol
+#
+# Ingress:
+#   - (không có — loadgenerator không expose port nào)
+#
+# Egress:
+#   - → frontend:8080  (gửi synthetic traffic)
+#   - → CoreDNS:53
+#
+# NOTE: loadgenerator chỉ tồn tại trong môi trường dev/staging.
+# Trong prod nên xóa Deployment này hoàn toàn thay vì chỉ
+# giới hạn bằng NetworkPolicy.
+# ============================================================
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: loadgenerator-netpol
+  namespace: online-boutique
+  annotations:
+    argocd.argoproj.io/sync-wave: "2"
+spec:
+  podSelector:
+    matchLabels:
+      app: loadgenerator
+  policyTypes:
+    - Ingress
+    - Egress
+
+  ingress: []   # không nhận traffic từ bất kỳ đâu
+
+  egress:
+    # CoreDNS
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+      ports:
+        - port: 53
+          protocol: UDP
+        - port: 53
+          protocol: TCP
+
+    # → frontend (HTTP port, env FRONTEND_ADDR = "frontend:80" → targetPort 8080)
+    - to:
+        - podSelector:
+            matchLabels:
+              app: frontend
+      ports:
+        - port: 8080
+          protocol: TCP

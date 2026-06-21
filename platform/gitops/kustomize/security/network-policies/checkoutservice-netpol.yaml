@@ -1,0 +1,115 @@
+# ============================================================
+# checkoutservice-netpol
+#
+# Ingress:
+#   - frontend → checkoutservice:5050
+#   - Prometheus → :5050/metrics
+#
+# Egress:
+#   - → cartservice:7070
+#   - → productcatalogservice:3550
+#   - → currencyservice:7000
+#   - → shippingservice:50051
+#   - → paymentservice:50051
+#   - → emailservice:8080
+#   - → CoreDNS:53
+# ============================================================
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: checkoutservice-netpol
+  namespace: online-boutique
+  annotations:
+    argocd.argoproj.io/sync-wave: "2"
+spec:
+  podSelector:
+    matchLabels:
+      app: checkoutservice
+  policyTypes:
+    - Ingress
+    - Egress
+
+  ingress:
+    # frontend → checkoutservice
+    - from:
+        - podSelector:
+            matchLabels:
+              app: frontend
+      ports:
+        - port: 5050
+          protocol: TCP
+
+    # Prometheus scrape
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: monitoring
+      ports:
+        - port: 5050
+          protocol: TCP
+
+  egress:
+    # CoreDNS
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+      ports:
+        - port: 53
+          protocol: UDP
+        - port: 53
+          protocol: TCP
+
+    # → cartservice
+    - to:
+        - podSelector:
+            matchLabels:
+              app: cartservice
+      ports:
+        - port: 7070
+          protocol: TCP
+
+    # → productcatalogservice
+    - to:
+        - podSelector:
+            matchLabels:
+              app: productcatalogservice
+      ports:
+        - port: 3550
+          protocol: TCP
+
+    # → currencyservice
+    - to:
+        - podSelector:
+            matchLabels:
+              app: currencyservice
+      ports:
+        - port: 7000
+          protocol: TCP
+
+    # → shippingservice
+    - to:
+        - podSelector:
+            matchLabels:
+              app: shippingservice
+      ports:
+        - port: 50051
+          protocol: TCP
+
+    # → paymentservice
+    - to:
+        - podSelector:
+            matchLabels:
+              app: paymentservice
+      ports:
+        - port: 50051
+          protocol: TCP
+
+    # → emailservice (port 8080 theo containerPort trong deployment)
+    - to:
+        - podSelector:
+            matchLabels:
+              app: emailservice
+      ports:
+        - port: 8080
+          protocol: TCP

@@ -1,0 +1,68 @@
+# ============================================================
+# emailservice-netpol
+#
+# Ingress:
+#   - checkoutservice → emailservice:8080
+#   - Prometheus      → :8080/metrics
+#
+# Egress:
+#   - → CoreDNS:53
+#   - → Internet:443 (SMTP/email delivery ra ngoài cluster)
+#
+# NOTE: emailservice cần egress ra internet để gửi email.
+# Nếu dùng SMTP relay nội bộ hoặc AWS SES qua VPC endpoint,
+# thay egress :443 bằng IP/port cụ thể của relay đó.
+# ============================================================
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: emailservice-netpol
+  namespace: online-boutique
+  annotations:
+    argocd.argoproj.io/sync-wave: "2"
+spec:
+  podSelector:
+    matchLabels:
+      app: emailservice
+  policyTypes:
+    - Ingress
+    - Egress
+
+  ingress:
+    # Chỉ checkoutservice gọi emailservice
+    - from:
+        - podSelector:
+            matchLabels:
+              app: checkoutservice
+      ports:
+        - port: 8080
+          protocol: TCP
+
+    # Prometheus scrape
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: monitoring
+      ports:
+        - port: 8080
+          protocol: TCP
+
+  egress:
+    # CoreDNS
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+      ports:
+        - port: 53
+          protocol: UDP
+        - port: 53
+          protocol: TCP
+
+    # Egress ra internet cho email delivery (HTTPS / SMTP over TLS)
+    # Nếu dùng AWS SES VPC endpoint: thay bằng ipBlock cụ thể
+    - ports:
+        - port: 443
+          protocol: TCP
+        - port: 587
+          protocol: TCP

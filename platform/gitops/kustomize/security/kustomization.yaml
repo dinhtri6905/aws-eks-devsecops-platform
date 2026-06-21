@@ -14,3 +14,4 @@ kind: Kustomization
 resources:
   - opa-gatekeeper
   - falco
+  - network-policies

@@ -1,0 +1,141 @@
+# ============================================================
+# frontend-netpol
+#
+# Ingress:
+#   - ALB (từ ngoài cluster, không giới hạn source IP)
+#   - loadgenerator → frontend:8080
+#   - Prometheus (namespace monitoring) → :8080/metrics
+#
+# Egress:
+#   - → cartservice:7070
+#   - → checkoutservice:5050
+#   - → productcatalogservice:3550
+#   - → currencyservice:7000
+#   - → recommendationservice:8080
+#   - → shippingservice:50051
+#   - → adservice:9555
+#   - → shoppingassistantservice:80
+#   - → CoreDNS (kube-system):53 UDP/TCP
+# ============================================================
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: frontend-netpol
+  namespace: online-boutique
+  annotations:
+    argocd.argoproj.io/sync-wave: "2"
+spec:
+  podSelector:
+    matchLabels:
+      app: frontend
+  policyTypes:
+    - Ingress
+    - Egress
+
+  ingress:
+    # ALB → frontend (traffic từ ngoài cluster qua node port)
+    - ports:
+        - port: 8080
+          protocol: TCP
+
+    # loadgenerator → frontend
+    - from:
+        - podSelector:
+            matchLabels:
+              app: loadgenerator
+      ports:
+        - port: 8080
+          protocol: TCP
+
+    # Prometheus scrape /metrics từ namespace monitoring
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: monitoring
+      ports:
+        - port: 8080
+          protocol: TCP
+
+  egress:
+    # CoreDNS — bắt buộc cho service discovery
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+      ports:
+        - port: 53
+          protocol: UDP
+        - port: 53
+          protocol: TCP
+
+    # → cartservice
+    - to:
+        - podSelector:
+            matchLabels:
+              app: cartservice
+      ports:
+        - port: 7070
+          protocol: TCP
+
+    # → checkoutservice
+    - to:
+        - podSelector:
+            matchLabels:
+              app: checkoutservice
+      ports:
+        - port: 5050
+          protocol: TCP
+
+    # → productcatalogservice
+    - to:
+        - podSelector:
+            matchLabels:
+              app: productcatalogservice
+      ports:
+        - port: 3550
+          protocol: TCP
+
+    # → currencyservice
+    - to:
+        - podSelector:
+            matchLabels:
+              app: currencyservice
+      ports:
+        - port: 7000
+          protocol: TCP
+
+    # → recommendationservice
+    - to:
+        - podSelector:
+            matchLabels:
+              app: recommendationservice
+      ports:
+        - port: 8080
+          protocol: TCP
+
+    # → shippingservice
+    - to:
+        - podSelector:
+            matchLabels:
+              app: shippingservice
+      ports:
+        - port: 50051
+          protocol: TCP
+
+    # → adservice
+    - to:
+        - podSelector:
+            matchLabels:
+              app: adservice
+      ports:
+        - port: 9555
+          protocol: TCP
+
+    # → shoppingassistantservice
+    - to:
+        - podSelector:
+            matchLabels:
+              app: shoppingassistantservice
+      ports:
+        - port: 80
+          protocol: TCP

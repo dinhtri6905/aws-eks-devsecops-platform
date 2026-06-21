@@ -1,0 +1,68 @@
+# ============================================================
+# productcatalogservice-netpol
+#
+# Ingress:
+#   - frontend              → productcatalogservice:3550
+#   - checkoutservice       → productcatalogservice:3550
+#   - recommendationservice → productcatalogservice:3550
+#   - shoppingassistantservice → productcatalogservice:3550
+#   - Prometheus            → :3550/metrics
+#
+# Egress:
+#   - → CoreDNS:53
+#   (không gọi service nào khác)
+# ============================================================
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: productcatalogservice-netpol
+  namespace: online-boutique
+  annotations:
+    argocd.argoproj.io/sync-wave: "2"
+spec:
+  podSelector:
+    matchLabels:
+      app: productcatalogservice
+  policyTypes:
+    - Ingress
+    - Egress
+
+  ingress:
+    # Các callers hợp lệ
+    - from:
+        - podSelector:
+            matchLabels:
+              app: frontend
+        - podSelector:
+            matchLabels:
+              app: checkoutservice
+        - podSelector:
+            matchLabels:
+              app: recommendationservice
+        - podSelector:
+            matchLabels:
+              app: shoppingassistantservice
+      ports:
+        - port: 3550
+          protocol: TCP
+
+    # Prometheus scrape
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: monitoring
+      ports:
+        - port: 3550
+          protocol: TCP
+
+  egress:
+    # CoreDNS
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+      ports:
+        - port: 53
+          protocol: UDP
+        - port: 53
+          protocol: TCP
