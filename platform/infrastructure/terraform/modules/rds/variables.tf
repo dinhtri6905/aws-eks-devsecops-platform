@@ -52,12 +52,6 @@ variable "db_username" {
   type        = string
 }
 
-variable "db_password" {
-  description = "Master password for the RDS instance — provide via TF_VAR_db_password, never hardcode"
-  type        = string
-  sensitive   = true
-}
-
 # ============================================================
 # STORAGE
 # ============================================================

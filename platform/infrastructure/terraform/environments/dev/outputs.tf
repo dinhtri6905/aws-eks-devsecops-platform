@@ -160,6 +160,10 @@ output "db_name" {
   value       = module.rds.db_name
 }
 
+output "rds_master_user_secret_arn" {
+  description = "ARN of the Secrets Manager secret holding the RDS master user credentials"
+  value       = module.rds.master_user_secret_arn
+}
 
 # ============================================================
 # ALB — LBC IRSA

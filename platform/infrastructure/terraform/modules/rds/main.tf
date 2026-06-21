@@ -8,7 +8,7 @@ locals {
 # ============================================================
 resource "aws_db_subnet_group" "main" {
   name        = "${local.name_prefix}-db-subnet-group"
-  description = "Subnet group for RDS instance — private subnets only"
+  description = "Subnet group for RDS instance"
   subnet_ids  = var.private_subnet_ids
 
   tags = {
@@ -21,8 +21,8 @@ resource "aws_db_subnet_group" "main" {
 # Custom parameters for PostgreSQL 15 — enables query logging for dev observability
 # ============================================================
 resource "aws_db_parameter_group" "main" {
-  name        = "${local.name_prefix}-postgres15-params"
-  family      = "postgres15"
+  name        = "${local.name_prefix}-postgres16-params"
+  family      = "postgres16"
   description = "Custom parameter group for PostgreSQL 15"
 
   parameter {
@@ -46,7 +46,7 @@ resource "aws_db_parameter_group" "main" {
   }
 
   tags = {
-    Name = "${local.name_prefix}-postgres15-params"
+    Name = "${local.name_prefix}-postgres16-params"
   }
 
   lifecycle {
@@ -74,7 +74,12 @@ resource "aws_db_instance" "main" {
   # Credentials
   db_name  = var.db_name
   username = var.db_username
-  password = var.db_password
+  # The master password is generated and stored by AWS RDS in Secrets Manager
+  # (no plaintext password variable, nothing to leak via tfvars/CI logs/state).
+  # Retrieve it via `aws_db_instance.main.master_user_secret[0].secret_arn`
+  # or `aws secretsmanager get-secret-value`.
+  manage_master_user_password = true
+
   port     = 5432
 
   # Networking

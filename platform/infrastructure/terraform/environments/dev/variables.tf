@@ -187,12 +187,6 @@ variable "db_username" {
   default     = "dbadmin"
 }
 
-variable "db_password" {
-  description = "Master password for the RDS instance — set via TF_VAR_db_password, never hardcode"
-  type        = string
-  sensitive   = true
-}
-
 variable "allocated_storage" {
   description = "Initial allocated storage in GiB"
   type        = number
@@ -214,7 +208,7 @@ variable "db_instance_class" {
 variable "db_engine_version" {
   description = "PostgreSQL engine version"
   type        = string
-  default     = "15.7"
+  default     = "16.14"
 }
 
 variable "multi_az" {
@@ -264,7 +258,7 @@ variable "argocd_chart_version" {
 variable "argocd_apps_chart_version" {
   description = "argocd-apps Helm chart version (used to create Root Application)"
   type        = string
-  default     = "2.0.2"
+  default     = "2.0.5"
 }
 
 variable "argocd_server_insecure" {
@@ -294,7 +288,7 @@ variable "gitops_repo_branch" {
 variable "gitops_root_app_path" {
   description = "Path inside the repo that contains child Application manifests"
   type        = string
-  default     = "platform/gitops/argocd/apps"
+  default     = "platform/gitops/argocd/applications"
 }
 
 variable "gitops_repo_ssh_private_key" {

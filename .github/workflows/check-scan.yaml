@@ -10,7 +10,7 @@ name: Security and Compliance Scan
 #
 # Required GitHub Secrets:
 #   AWS_DEV_ROLE_ARN, BUCKET_TF_STATE
-#   TF_VAR_DB_PASSWORD, GITOPS_REPO_URL
+#   GITOPS_REPO_URL
 #   SLACK_WEBHOOK_URL
 # =============================================================================
 

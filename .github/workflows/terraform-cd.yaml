@@ -15,7 +15,7 @@ name: Terraform CD
 # Required GitHub Secrets:
 #   AWS_DEV_ROLE_ARN     — IAM Role ARN for OIDC (dev account)
 #   BUCKET_TF_STATE      — S3 bucket name for remote state
-#   TF_VAR_db_password   — RDS master password
+#   GITOPS_REPO_URL
 #   SLACK_WEBHOOK_URL
 # =============================================================================
 
@@ -113,7 +113,6 @@ jobs:
             2>&1 | tee ${{ runner.temp }}/tf-plan.txt
           echo "exitcode=${PIPESTATUS[0]}" >> $GITHUB_OUTPUT
         env:
-          TF_VAR_db_password: ${{ secrets.TF_VAR_DB_PASSWORD }}
           TF_VAR_gitops_repo_url: ${{ secrets.GITOPS_REPO_URL }}
         continue-on-error: true
 
@@ -296,7 +295,6 @@ jobs:
             -input=false \
             -no-color
         env:
-          TF_VAR_db_password: ${{ secrets.TF_VAR_DB_PASSWORD }}
           TF_VAR_gitops_repo_url: ${{ secrets.GITOPS_REPO_URL }}
 
       - name: Collect outputs
@@ -383,7 +381,6 @@ jobs:
             -input=false \
             -no-color
         env:
-          TF_VAR_db_password: ${{ secrets.TF_VAR_DB_PASSWORD }}
           TF_VAR_gitops_repo_url: ${{ secrets.GITOPS_REPO_URL }}
 
 # =============================================================================
