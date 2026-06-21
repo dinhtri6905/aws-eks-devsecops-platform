@@ -142,14 +142,11 @@ module "argocd-bootstrap" {
 
   argocd_project_name = var.argocd_project_name
 
-  # ArgoCD Helm chart settings
-  argocd_namespace          = var.argocd_namespace
-  argocd_chart_version      = var.argocd_chart_version
-  argocd_apps_chart_version = var.argocd_apps_chart_version
-  argocd_server_insecure    = var.argocd_server_insecure
-  argocd_ha_enabled         = var.argocd_ha_enabled
+  argocd_namespace       = var.argocd_namespace
+  argocd_chart_version   = var.argocd_chart_version
+  argocd_server_insecure = var.argocd_server_insecure
+  argocd_ha_enabled      = var.argocd_ha_enabled
 
-  # GitOps configuration
   gitops_repo_url             = var.gitops_repo_url
   gitops_repo_branch          = var.gitops_repo_branch
   gitops_root_app_path        = var.gitops_root_app_path

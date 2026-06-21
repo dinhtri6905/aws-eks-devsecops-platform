@@ -255,12 +255,6 @@ variable "argocd_chart_version" {
   default     = "7.6.8"
 }
 
-variable "argocd_apps_chart_version" {
-  description = "argocd-apps Helm chart version (used to create Root Application)"
-  type        = string
-  default     = "2.0.5"
-}
-
 variable "argocd_server_insecure" {
   description = "Run ArgoCD in insecure mode (true when ALB terminates TLS)"
   type        = bool
@@ -288,7 +282,7 @@ variable "gitops_repo_branch" {
 variable "gitops_root_app_path" {
   description = "Path inside the repo that contains child Application manifests"
   type        = string
-  default     = "platform/gitops/argocd/applications"
+  default     = "platform/gitops/argocd/apps"
 }
 
 variable "gitops_repo_ssh_private_key" {
