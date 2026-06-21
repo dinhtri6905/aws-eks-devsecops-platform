@@ -1,0 +1,4 @@
+- ArgoCD Application bị Terraform quản lý thay vì để GitOps tự trị — Root App nên chỉ bootstrap một lần (qua kubectl apply hoặc Terraform chạy đúng 1 lần rồi bỏ qua), sau đó để Git/ArgoCD tự cập nhật chính nó. Để Terraform tiếp tục quản lý sẽ xung đột với các field ArgoCD tự ghi đè (status, operation), gây drift giả.
+- Blue/Green áp dụng cho toàn bộ 11 service thay vì chọn lọc theo rủi ro — chỉ nên dùng cho service quan trọng, traffic cao (frontend, checkout); các service phụ (email, currency...) dùng rolling update thường là đủ, tránh tốn gấp đôi resource không cần thiết.
+- Thiếu NetworkPolicy — hiện tại pod nào cũng gọi được pod nào trong cluster; cần giới hạn traffic giữa các service theo nguyên tắc least privilege ở tầng network, không chỉ dừng ở admission control (Gatekeeper).
+- SSO/RBAC để ở mục "tương lai" thay vì làm ngay — đang dùng admin password mặc định cho ArgoCD, đây là rủi ro bảo mật cần xử lý từ đầu, không nên để như một enhancement có thể trì hoãn.
