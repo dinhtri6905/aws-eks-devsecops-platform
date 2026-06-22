@@ -1,21 +1,74 @@
+# =============================================================================
+# platform/gitops/argocd/root-app.yaml
+# =============================================================================
+#
+# ArgoCD Root Application bootstrap manifest (App of Apps pattern).
+#
+# Terraform only installs ArgoCD. This file is applied once during cluster
+# bootstrap:
+#
+#   kubectl apply -f platform/gitops/argocd/root-app.yaml
+#
+# After that, ArgoCD manages these resources through GitOps. All changes
+# should be made via Git commits and reconciled automatically.
+#
+# Terraform manages infrastructure, while ArgoCD manages workloads and
+# avoids continuous state drift caused by ArgoCD-managed fields.
+# =============================================================================
+
+# =============================================================================
+# AppProject — "platform-project"
+# =============================================================================
+# Groups the Root Application and every child Application under it
+# (platform-services, security, observability, online-boutique) under a
+# single project boundary, rather than relying on ArgoCD's built-in
+# "default" project.
+# =============================================================================
+apiVersion: argoproj.io/v1alpha1
+kind: AppProject
+metadata:
+  name: platform-project
+  namespace: argocd
+spec:
+  description: >-
+    Platform project — groups the App of Apps Root Application and all
+    platform child Applications.
+
+  sourceRepos:
+    - "*"
+
+  destinations:
+    - server: https://kubernetes.default.svc
+      namespace: "*"
+
+  clusterResourceWhitelist:
+    - group: "*"
+      kind: "*"
+
+  namespaceResourceWhitelist:
+    - group: "*"
+      kind: "*"
+
+---
+# =============================================================================
+# Application — Root Application
+# =============================================================================
+# Entry point of the App of Apps pattern. Watches the applications
+# directory in this repo, which contains the child Application manifests,
+# each deployed in its own ArgoCD sync wave.
+# =============================================================================
 apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:
-  name: root-app
+  name: eks-devsecops-dev-root
   namespace: argocd
   finalizers:
     - resources-finalizer.argocd.argoproj.io
-  annotations:
-    argocd.argoproj.io/sync-wave: "0"
 spec:
-  project: platform
+  project: platform-project
 
-  # The Root Application watches this directory, which contains
-  # the four child Application manifests (App-of-Apps pattern).
-  # ArgoCD will create/update/delete those Applications based on
-  # what is present here.
   source:
-    repoURL: https://github.com/dinhtri6905/aws-eks-devsecops-platform.git
+    repoURL: https://github.com/dinhtri6905/aws-eks-devsecops-platform
     targetRevision: main
     path: platform/gitops/argocd/applications
 
@@ -27,9 +80,13 @@ spec:
     automated:
       prune: true
       selfHeal: true
+
     syncOptions:
       - CreateNamespace=true
-      - ApplyOutOfSyncOnly=true
+      - PrunePropagationPolicy=foreground
+      - PruneLast=true
+      - ServerSideApply=true
+
     retry:
       limit: 5
       backoff:

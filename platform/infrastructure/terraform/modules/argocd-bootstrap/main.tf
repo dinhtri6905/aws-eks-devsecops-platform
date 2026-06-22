@@ -2,17 +2,24 @@
 # MODULE: argocd-bootstrap / main.tf
 # =============================================================================
 #
+# Installs ArgoCD on the cluster via Helm and, optionally, a credentials
+# secret for a private GitOps repository.
+#
 # Resource creation order (enforced by depends_on):
 #
-#   ① kubernetes_namespace "argocd"
-#       └── ② helm_release "argocd"              (argo-cd chart)
-#               ├── ③ kubernetes_secret           (git repo credentials — optional)
-#               └── ④ kubernetes_manifest "root_app" (Application CRD → Root Application)
+#   kubernetes_namespace "argocd"
+#       └── helm_release "argocd"    (argo-cd chart)
+#               └── kubernetes_secret (git repo credentials — optional)
 #
-# The Root Application (App of Apps) points at your GitOps repo.
-# ArgoCD then takes over and continuously syncs everything else from Git.
+# Terraform owns infrastructure only. The ArgoCD AppProject and the Root
+# Application (App of Apps pattern) are deliberately not created here —
+# they live as a static manifest at platform/gitops/argocd/root-app.yaml,
+# applied once via `kubectl apply` when bootstrapping a new cluster. From
+# that point on, ArgoCD reconciles both objects directly from Git, which
+# keeps ArgoCD's own continuous status/operation writes out of the
+# Terraform state loop entirely.
 #
-# Providers required in the ROOT module (environments/dev/provider.tf):
+# Providers required in the root module:
 #   - hashicorp/helm       >= 2.12
 #   - hashicorp/kubernetes >= 2.27
 #
@@ -20,7 +27,6 @@
 locals {
   name_prefix = "${var.project_name}-${var.environment}"
 
-  # Labels applied to all Kubernetes resources managed by this module
   common_labels = {
     "app.kubernetes.io/managed-by" = "Terraform"
     "app.kubernetes.io/part-of"    = local.name_prefix
@@ -51,10 +57,9 @@ resource "helm_release" "argocd" {
   namespace        = kubernetes_namespace.argocd.metadata[0].name
   create_namespace = false
 
-  # Wait until all ArgoCD pods are running before proceeding
   timeout         = 600
   wait            = true
-  atomic          = true # rolls back on failure
+  atomic          = true
   cleanup_on_fail = true
 
   skip_crds = false
@@ -62,7 +67,6 @@ resource "helm_release" "argocd" {
   values = [
     yamlencode({
 
-      # Global 
       global = {
         logging = {
           level  = "info"
@@ -70,7 +74,6 @@ resource "helm_release" "argocd" {
         }
       }
 
-      # ArgoCD config 
       configs = {
 
         params = {
@@ -83,7 +86,6 @@ resource "helm_release" "argocd" {
           # Track resources by annotation (safer than label tracking)
           "application.resourceTrackingMethod" = "annotation"
 
-          # Enable status badge on the ArgoCD UI
           "statusbadge.enabled" = "true"
 
           # Exclude noisy Cilium resources from ArgoCD diff
@@ -102,7 +104,6 @@ resource "helm_release" "argocd" {
         }
       }
 
-      # ArgoCD Server 
       server = {
         replicas = var.argocd_ha_enabled ? 2 : 1
 
@@ -117,7 +118,6 @@ resource "helm_release" "argocd" {
         }
       }
 
-      # Application Controller 
       # Reconciles all Applications — keep at 1 replica unless > 50 clusters
       controller = {
         replicas = 1
@@ -127,7 +127,6 @@ resource "helm_release" "argocd" {
         }
       }
 
-      # Repo Server 
       repoServer = {
         replicas = var.argocd_ha_enabled ? 2 : 1
         resources = {
@@ -136,7 +135,6 @@ resource "helm_release" "argocd" {
         }
       }
 
-      # ApplicationSet Controller 
       applicationSet = {
         replicas = var.argocd_ha_enabled ? 2 : 1
         resources = {
@@ -145,7 +143,6 @@ resource "helm_release" "argocd" {
         }
       }
 
-      # Redis 
       redis = {
         resources = {
           requests = { cpu = "100m", memory = "128Mi" }
@@ -158,8 +155,7 @@ resource "helm_release" "argocd" {
         enabled = var.argocd_ha_enabled
       }
 
-      # Dex (SSO)
-      # Disabled: SSO can be configured later (GitHub OAuth, Okta, etc.)
+      # SSO can be configured later (GitHub OAuth, Okta, etc.)
       dex = {
         enabled = false
       }
@@ -176,16 +172,13 @@ resource "helm_release" "argocd" {
 # ArgoCD reads this secret to authenticate with the GitOps repository.
 # Label "argocd.argoproj.io/secret-type: repository" is required by ArgoCD.
 # ============================================================
-
 resource "kubernetes_secret" "argocd_repo" {
-  # Only create when an SSH private key is provided
   count = var.gitops_repo_ssh_private_key != "" ? 1 : 0
 
   metadata {
     name      = "${local.name_prefix}-gitops-repo"
     namespace = kubernetes_namespace.argocd.metadata[0].name
     labels = merge(local.common_labels, {
-      # Required label for ArgoCD to discover repository credentials
       "argocd.argoproj.io/secret-type" = "repository"
     })
   }
@@ -198,82 +191,5 @@ resource "kubernetes_secret" "argocd_repo" {
 
   type = "Opaque"
 
-  depends_on = [helm_release.argocd]
-}
-
-# ============================================================
-# ROOT APPLICATION — App of Apps pattern
-# ============================================================
-# Creates the ArgoCD Application CRD directly via the Kubernetes provider,
-# bypassing the "argocd-apps" Helm chart.
-#
-# NOTE: The "argocd-apps" chart (tested on 2.0.2 and 2.0.5) has a confirmed
-# bug where the rendered manifest fails Kubernetes API submission with:
-#   "unable to decode: json: cannot unmarshal number into Go struct field
-#    ObjectMeta.metadata.name of type string"
-# This occurs even when all values (including retry.limit/retry.backoff.factor)
-# are explicitly passed as quoted strings — confirmed via TF_LOG=DEBUG showing
-# a fully valid, all-string values.yaml still failing at chart render time.
-# Using kubernetes_manifest avoids the chart's Go template layer entirely.
-#
-# The Root App points at: gitops_repo_url / gitops_root_app_path
-# That directory contains individual Application YAMLs for every platform
-# component (Metrics Server, LBC, Prometheus, Grafana, OPA, Falco, etc.)
-#
-# ArgoCD then continuously syncs those Applications from Git — fully automated.
-# ============================================================
-resource "kubernetes_manifest" "argocd_root_app" {
-  manifest = {
-    apiVersion = "argoproj.io/v1alpha1"
-    kind       = "Application"
-
-    metadata = {
-      name      = "${local.name_prefix}-root"
-      namespace = var.argocd_namespace
-      finalizers = [
-        "resources-finalizer.argocd.argoproj.io"
-      ]
-    }
-
-    spec = {
-      project = var.argocd_project_name
-
-      source = {
-        repoURL        = var.gitops_repo_url
-        targetRevision = var.gitops_repo_branch
-        path           = var.gitops_root_app_path
-      }
-
-      destination = {
-        server    = "https://kubernetes.default.svc"
-        namespace = var.argocd_namespace
-      }
-
-      syncPolicy = {
-        automated = {
-          prune    = true
-          selfHeal = true
-        }
-
-        syncOptions = [
-          "CreateNamespace=true",
-          "PrunePropagationPolicy=foreground",
-          "PruneLast=true",
-          "ServerSideApply=true",
-        ]
-
-        retry = {
-          limit = "5"
-          backoff = {
-            duration    = "5s"
-            factor      = 2
-            maxDuration = "3m"
-          }
-        }
-      }
-    }
-  }
-
-  # Root App can only be created after ArgoCD (and its CRDs) are installed
   depends_on = [helm_release.argocd]
 }

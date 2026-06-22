@@ -18,11 +18,6 @@ output "argocd_server_service" {
   value       = "argocd-server"
 }
 
-output "root_app_name" {
-  description = "Name of the ArgoCD Root Application (App of Apps), created via kubernetes_manifest"
-  value       = kubernetes_manifest.argocd_root_app.manifest.metadata.name
-}
-
 output "gitops_repo_url" {
   description = "GitOps repository URL that ArgoCD is watching"
   value       = var.gitops_repo_url

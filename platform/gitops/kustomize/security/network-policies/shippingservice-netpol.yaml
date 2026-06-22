@@ -1,0 +1,60 @@
+# ============================================================
+# shippingservice-netpol
+#
+# Ingress:
+#   - frontend        → shippingservice:50051
+#   - checkoutservice → shippingservice:50051
+#   - Prometheus      → :50051/metrics
+#
+# Egress:
+#   - → CoreDNS:53
+#   (leaf service — không gọi service nào khác)
+# ============================================================
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: shippingservice-netpol
+  namespace: online-boutique
+  annotations:
+    argocd.argoproj.io/sync-wave: "2"
+spec:
+  podSelector:
+    matchLabels:
+      app: shippingservice
+  policyTypes:
+    - Ingress
+    - Egress
+
+  ingress:
+    # frontend + checkoutservice → shippingservice
+    - from:
+        - podSelector:
+            matchLabels:
+              app: frontend
+        - podSelector:
+            matchLabels:
+              app: checkoutservice
+      ports:
+        - port: 50051
+          protocol: TCP
+
+    # Prometheus scrape
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: monitoring
+      ports:
+        - port: 50051
+          protocol: TCP
+
+  egress:
+    # CoreDNS
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+      ports:
+        - port: 53
+          protocol: UDP
+        - port: 53
+          protocol: TCP

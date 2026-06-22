@@ -1,0 +1,21 @@
+# ============================================================
+# default-deny-all
+# Baseline policy: block mọi ingress và egress cho tất cả pod
+# trong namespace online-boutique. Các policy cụ thể bên dưới
+# sẽ mở lại đúng các luồng cần thiết.
+#
+# QUAN TRỌNG: Apply file này SAU KHI đã apply tất cả
+# <service>-netpol.yaml để tránh gián đoạn traffic.
+# ============================================================
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny-all
+  namespace: online-boutique
+  annotations:
+    argocd.argoproj.io/sync-wave: "1"
+spec:
+  podSelector: {}     # match tất cả pod trong namespace
+  policyTypes:
+    - Ingress
+    - Egress

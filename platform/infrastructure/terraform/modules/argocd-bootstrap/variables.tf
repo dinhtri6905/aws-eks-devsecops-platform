@@ -1,8 +1,9 @@
 # =============================================================================
 # MODULE: argocd-bootstrap
-# DESCRIPTION: Installs ArgoCD via Helm, creates a private Git repo secret,
-#              and bootstraps the Root Application (App of Apps pattern).
-#              Uses only official HashiCorp providers — no kubectl provider.
+# DESCRIPTION: Installs ArgoCD via Helm and creates an optional private Git
+#              repo credentials secret. The AppProject and Root Application
+#              live as a static manifest at platform/gitops/argocd/root-app.yaml,
+#              applied once via kubectl — not managed by this module.
 # =============================================================================
 
 # ============================================================
@@ -30,8 +31,10 @@ variable "environment" {
 # ============================================================
 # ArgoCD Project
 # ============================================================
+# Reference value only — must match spec.project in
+# platform/gitops/argocd/root-app.yaml.
 variable "argocd_project_name" {
-  description = "Name of the ArgoCD Project used to group and manage applications"
+  description = "ArgoCD AppProject name used to group platform Applications. Must match platform/gitops/argocd/root-app.yaml."
   type        = string
 
   validation {
@@ -64,14 +67,6 @@ variable "argocd_ha_enabled" {
 }
 
 # ============================================================
-# argocd-apps Helm Chart (used to deploy the Root Application)
-# ============================================================
-variable "argocd_apps_chart_version" {
-  description = "Version of the argocd-apps Helm chart used to create the Root App"
-  type        = string
-}
-
-# ============================================================
 # GitOps Repository
 # ============================================================
 variable "gitops_repo_url" {
@@ -88,13 +83,16 @@ variable "gitops_repo_url" {
 }
 
 variable "gitops_repo_branch" {
-  description = "Git branch ArgoCD will track for the Root Application"
+  description = "Git branch ArgoCD tracks for the Root Application"
   type        = string
 }
 
+# Reference value only — must match spec.source.path in
+# platform/gitops/argocd/root-app.yaml.
 variable "gitops_root_app_path" {
-  description = "Path in the repo containing child Application manifests (App of Apps)"
+  description = "Path in the repo containing child Application manifests. Must match platform/gitops/argocd/root-app.yaml."
   type        = string
+  default     = "platform/gitops/argocd/applications"
 }
 
 variable "gitops_repo_ssh_private_key" {

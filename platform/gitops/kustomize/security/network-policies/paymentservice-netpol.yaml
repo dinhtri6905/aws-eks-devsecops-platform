@@ -1,0 +1,59 @@
+# ============================================================
+# paymentservice-netpol
+#
+# Ingress:
+#   - checkoutservice → paymentservice:50051
+#   - Prometheus      → :50051/metrics
+#
+# Egress:
+#   - → CoreDNS:53
+#   (leaf service — không gọi service nào khác)
+#
+# NOTE: paymentservice là service nhạy cảm nhất, chỉ được
+# gọi bởi checkoutservice. Không có caller nào khác được phép.
+# ============================================================
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: paymentservice-netpol
+  namespace: online-boutique
+  annotations:
+    argocd.argoproj.io/sync-wave: "2"
+spec:
+  podSelector:
+    matchLabels:
+      app: paymentservice
+  policyTypes:
+    - Ingress
+    - Egress
+
+  ingress:
+    # Chỉ checkoutservice được gọi paymentservice
+    - from:
+        - podSelector:
+            matchLabels:
+              app: checkoutservice
+      ports:
+        - port: 50051
+          protocol: TCP
+
+    # Prometheus scrape
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: monitoring
+      ports:
+        - port: 50051
+          protocol: TCP
+
+  egress:
+    # CoreDNS
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+      ports:
+        - port: 53
+          protocol: UDP
+        - port: 53
+          protocol: TCP

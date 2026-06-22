@@ -1,0 +1,50 @@
+# ============================================================
+# redis-cart-netpol
+#
+# Ingress:
+#   - cartservice → redis-cart:6379
+#
+# Egress:
+#   - → CoreDNS:53
+#   (không gọi service nào khác — pure datastore)
+#
+# NOTE: redis-cart là service nhạy cảm nhất về dữ liệu
+# (lưu cart data của user). Chỉ cartservice được kết nối.
+# Không có Prometheus scrape port riêng nên bỏ qua rule đó.
+# ============================================================
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: redis-cart-netpol
+  namespace: online-boutique
+  annotations:
+    argocd.argoproj.io/sync-wave: "2"
+spec:
+  podSelector:
+    matchLabels:
+      app: redis-cart
+  policyTypes:
+    - Ingress
+    - Egress
+
+  ingress:
+    # Chỉ cartservice được kết nối vào Redis
+    - from:
+        - podSelector:
+            matchLabels:
+              app: cartservice
+      ports:
+        - port: 6379
+          protocol: TCP
+
+  egress:
+    # CoreDNS
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+      ports:
+        - port: 53
+          protocol: UDP
+        - port: 53
+          protocol: TCP

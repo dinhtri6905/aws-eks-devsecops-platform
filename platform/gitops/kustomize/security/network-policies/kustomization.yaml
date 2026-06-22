@@ -1,0 +1,30 @@
+# ============================================================
+# network-policies
+# Kubernetes NetworkPolicy resources cho namespace online-boutique.
+# Triển khai theo nguyên tắc least-privilege:
+#   1. default-deny-all  — block mọi ingress + egress làm baseline
+#   2. <service>-netpol  — mở đúng các luồng hợp lệ theo traffic matrix
+#   3. Egress DNS (CoreDNS :53) được permit trong mỗi policy
+#   4. Egress Prometheus scrape từ namespace monitoring được permit
+#
+# Yêu cầu: VPC CNI addon phải bật enableNetworkPolicy = "true"
+# Xem: platform/infrastructure/terraform/modules/eks/main.tf
+# ============================================================
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+resources:
+  - default-deny.yaml
+  - frontend-netpol.yaml
+  - cartservice-netpol.yaml
+  - checkoutservice-netpol.yaml
+  - productcatalogservice-netpol.yaml
+  - recommendationservice-netpol.yaml
+  - currencyservice-netpol.yaml
+  - paymentservice-netpol.yaml
+  - shippingservice-netpol.yaml
+  - emailservice-netpol.yaml
+  - adservice-netpol.yaml
+  - shoppingassistantservice-netpol.yaml
+  - redis-cart-netpol.yaml
+  - loadgenerator-netpol.yaml

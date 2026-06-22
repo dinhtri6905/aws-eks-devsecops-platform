@@ -1,0 +1,69 @@
+# ============================================================
+# cartservice-netpol
+#
+# Ingress:
+#   - frontend          → cartservice:7070
+#   - checkoutservice   → cartservice:7070
+#   - Prometheus        → :7070/metrics
+#
+# Egress:
+#   - → redis-cart:6379
+#   - → CoreDNS:53
+# ============================================================
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: cartservice-netpol
+  namespace: online-boutique
+  annotations:
+    argocd.argoproj.io/sync-wave: "2"
+spec:
+  podSelector:
+    matchLabels:
+      app: cartservice
+  policyTypes:
+    - Ingress
+    - Egress
+
+  ingress:
+    # frontend + checkoutservice → cartservice
+    - from:
+        - podSelector:
+            matchLabels:
+              app: frontend
+        - podSelector:
+            matchLabels:
+              app: checkoutservice
+      ports:
+        - port: 7070
+          protocol: TCP
+
+    # Prometheus scrape
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: monitoring
+      ports:
+        - port: 7070
+          protocol: TCP
+
+  egress:
+    # CoreDNS
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+      ports:
+        - port: 53
+          protocol: UDP
+        - port: 53
+          protocol: TCP
+
+    # → redis-cart
+    - to:
+        - podSelector:
+            matchLabels:
+              app: redis-cart
+      ports:
+        - port: 6379
+          protocol: TCP
