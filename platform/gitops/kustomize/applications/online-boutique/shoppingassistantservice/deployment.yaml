@@ -28,7 +28,9 @@ spec:
             - name: PORT
               value: "80"
             - name: PRODUCT_CATALOG_SERVICE_ADDR
-              value: "productcatalogservice:3550"
+              value: productcatalogservice:3550
+            - name: PROJECT_ID
+              value: "online-boutique-dev"
           resources:
             requests:
               cpu: 100m

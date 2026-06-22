@@ -16,6 +16,7 @@ patches:
   - path: replicas-patch.yaml
     target:
       kind: Deployment
+      name: ".*"
   - path: configmap-patch.yaml
     target:
       kind: ConfigMap
