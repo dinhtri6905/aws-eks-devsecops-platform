@@ -1,17 +1,17 @@
 # ============================================================
 # Helm values for Falco
 # Chart: https://falcosecurity.github.io/charts
-# Version: 4.7.4
+# Version: 9.1.0
 #
-# Custom rules are no longer inline here.
-# They are defined in custom-rules/custom-rules.yaml as a
-# ConfigMap, then mounted into Falco via extraVolumes so they
+# Custom rules are defined in custom-rules/custom-rules.yaml
+# as a ConfigMap, mounted into Falco via extraVolumes so they
 # can be updated independently without a Helm upgrade.
 # ============================================================
 
-# Modern eBPF driver — no kernel module required on EKS
+# modern_ebpf driver — CO-RE eBPF, no kernel module or probe loader needed.
+# Supported on EKS (kernel >= 5.8, Amazon Linux 2023 / Bottlerocket).
 driver:
-  kind: ebpf
+  kind: modern_ebpf
 
 tty: false
 
@@ -27,7 +27,6 @@ falco:
     - /etc/falco/falco_rules.yaml
     - /etc/falco/falco_rules.local.yaml
     - /etc/falco/rules.d
-    # Custom rules mounted from ConfigMap
     - /etc/falco/custom-rules/custom-rules.yaml
 
   json_output: true
@@ -38,18 +37,19 @@ falco:
     enabled: true
     listen_port: 8765
 
-resources:
-  requests:
-    cpu: 100m
-    memory: 512Mi
-  limits:
-    cpu: 1000m
-    memory: 1024Mi
+  # In chart v9, container resources live under falco key
+  resources:
+    requests:
+      cpu: 100m
+      memory: 512Mi
+    limits:
+      cpu: 1000m
+      memory: 1024Mi
 
 # Falco needs privileged access to read kernel events via eBPF.
 # The 'falco' namespace is excluded in each OPA Constraint's
 # excludedNamespaces list — this is an intentional exception.
-securityContext:
+containerSecurityContext:
   privileged: true
 
 tolerations:
@@ -57,8 +57,6 @@ tolerations:
     operator: Exists
 
 # Mount the custom-rules ConfigMap into the Falco DaemonSet
-# so rules can be updated by changing the ConfigMap only,
-# without triggering a full Helm chart upgrade.
 extraVolumes:
   - name: custom-rules
     configMap:
