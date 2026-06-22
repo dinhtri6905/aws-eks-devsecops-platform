@@ -11,7 +11,7 @@ metadata:
     # Deploy after security (wave 2) — Gatekeeper policies will validate these workloads
     argocd.argoproj.io/sync-wave: "3"
 spec:
-  project: platform
+  project: platform-project
   # Deploys the kube-prometheus-stack (Prometheus, Grafana,
   # Alertmanager), plus custom dashboards, alert rules, and
   # ServiceMonitors.

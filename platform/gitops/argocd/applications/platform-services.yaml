@@ -10,7 +10,7 @@ metadata:
   annotations:
     argocd.argoproj.io/sync-wave: "1"
 spec:
-  project: platform
+  project: platform-project
   source:
     repoURL: https://github.com/dinhtri6905/aws-eks-devsecops-platform.git
     targetRevision: main

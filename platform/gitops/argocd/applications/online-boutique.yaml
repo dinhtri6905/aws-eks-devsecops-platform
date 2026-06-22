@@ -11,7 +11,7 @@ metadata:
     # Deploy last (wave 4) — platform + security + observability must be ready first
     argocd.argoproj.io/sync-wave: "4"
 spec:
-  project: platform
+  project: platform-project
   # Deploys the Online Boutique microservices application.
   # The dev overlay applies cost-saving patches (reduced
   # replicas, dev-specific config) on top of the base

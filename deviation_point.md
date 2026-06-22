@@ -10,3 +10,5 @@ Bước 3 — Sửa modules/argocd-bootstrap/outputs.tf: xóa output liên quan
 Bước 4 — Dọn variables.tf của module và environments/dev/main.tf/variables.tf: giữ lại biến vẫn cần (vd. cho secret repo SSH key), đánh dấu biến nào chỉ còn dùng để generate YAML tham khảo
 Bước 5 — Trên cluster hiện tại của bạn: dọn state + dọn resource cũ trên cluster (vì bạn đã apply 2 resource này qua Terraform rồi — cần xử lý migration, không phải tạo mới từ đầu)
 Bước 6 — Cập nhật Deployment Guide / README: thêm bước kubectl apply -f platform/gitops/argocd/root-app.yaml vào đúng vị trí trong quy trình
+
+

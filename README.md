@@ -2,7 +2,7 @@
 
 A cloud-native DevSecOps platform built on AWS EKS to demonstrate secure, automated, and scalable application delivery through GitOps principles.
 
-The project uses Online Boutique, a microservices-based e-commerce application consisting of 12 services, as the demonstration workload. Rather than focusing solely on application deployment, the project aims to establish a complete platform that integrates infrastructure automation, continuous delivery, policy enforcement, runtime security, and observability within a unified operational workflow.
+The project uses Online Boutique, a microservices-based e-commerce application, as the demonstration workload. Rather than focusing solely on application deployment, the project aims to establish a complete platform that integrates infrastructure automation, continuous delivery, policy enforcement, runtime security, and observability within a unified operational workflow.
 
 By combining Infrastructure as Code, GitOps practices, automated security controls, and centralized monitoring, the platform enables infrastructure, applications, and operational policies to be managed consistently through Git, providing reliable deployments, stronger security governance, and improved operational efficiency.
 
@@ -64,6 +64,7 @@ Microservices teams typically face three compounding challenges: **security drif
 - Blue/Green deployments via Argo Rollouts for zero-impact cutover and instant rollback
 - OPA Rego policy gates on Terraform plans, OPA Gatekeeper admission control on the cluster, and Falco runtime detection on every node
 - Five GitHub Actions workflows using OIDC-based AWS authentication — no long-lived access keys
+- Clear ownership boundary between Terraform and GitOps: Terraform provisions infrastructure and installs ArgoCD; ArgoCD owns everything that runs on top of it, including its own Root Application
 
 ---
 
@@ -71,7 +72,7 @@ Microservices teams typically face three compounding challenges: **security drif
 
 > **[Architecture Diagram Placeholder]**
 
-The platform begins with Terraform provisioning a VPC, an EKS cluster, ECR repositories, and an RDS instance on AWS. Terraform also bootstraps ArgoCD on the cluster and creates a Root Application that takes over from there. ArgoCD then pulls platform services, security tooling, the observability stack, and the Online Boutique application from Git, applying them in a strict sync-wave order. GitHub Actions pipelines handle both infrastructure changes (plan → OPA policy gate → apply) and application changes (build → scan → push to ECR → update GitOps manifests), with security scanning embedded at every stage rather than performed once at the end.
+The platform begins with Terraform provisioning a VPC, an EKS cluster, ECR repositories, and an RDS instance on AWS, then installing ArgoCD on the cluster. From there, ArgoCD's Root Application — a static manifest applied once via `kubectl` — takes over and pulls platform services, security tooling, the observability stack, and the Online Boutique application from Git, applying them in a strict sync-wave order. GitHub Actions pipelines handle both infrastructure changes (plan → OPA policy gate → apply) and application changes (build → scan → push to ECR → update GitOps manifests), with security scanning embedded at every stage rather than performed once at the end.
 
 ---
 
@@ -79,9 +80,9 @@ The platform begins with Terraform provisioning a VPC, an EKS cluster, ECR repos
 
 The platform is organized into five cooperating layers.
 
-- **Infrastructure Layer** — Terraform provisions all AWS resources: a VPC with public/private subnets across two availability zones, an EKS cluster with a managed node group, ECR repositories for each microservice, an RDS PostgreSQL instance, and the IAM roles required by the cluster and its controllers. A dedicated `argocd-bootstrap` module installs ArgoCD via Helm and creates the Root Application, handing control to GitOps entirely.
+- **Infrastructure Layer** — Terraform provisions all AWS resources: a VPC with public/private subnets across two availability zones, an EKS cluster with a managed node group, ECR repositories for each microservice, an RDS PostgreSQL instance, and the IAM roles required by the cluster and its controllers. A dedicated `argocd-bootstrap` module installs ArgoCD via Helm. Terraform's involvement ends there — it does not create or manage the Root Application.
 
-- **GitOps Layer** — ArgoCD continuously reconciles the cluster state against what is declared in Git. A single Root Application watches `platform/gitops/argocd/applications/` and manages four child Applications, each deployed in a specific sync wave to respect dependency ordering.
+- **GitOps Layer** — ArgoCD continuously reconciles the cluster state against what is declared in Git. A Root Application and its AppProject are defined as a static manifest at `platform/gitops/argocd/root-app.yaml`, applied once with `kubectl apply` when bootstrapping a new cluster. From that point on, ArgoCD reconciles the Root Application from Git like any other Application — including itself. The Root Application watches `platform/gitops/argocd/applications/` and manages four child Applications, each deployed in a specific sync wave to respect dependency ordering.
 
 - **Security Layer** — Controls operate at four points in the lifecycle: OPA Rego evaluates Terraform plans before apply, Trivy scans container images before they reach the registry, OPA Gatekeeper validates every Pod at admission time, and Falco inspects syscalls at runtime on every node.
 
@@ -99,9 +100,11 @@ flowchart TD
     CD -->|terraform/** changed| TF[terraform-cd\nplan → OPA gate → apply]
     CD -->|microservices/** changed| APP[app-cd\nbuild → Trivy scan → push ECR → Kustomize update]
     TF -->|terraform apply| AWS[AWS Infrastructure\nVPC · EKS · ECR · RDS]
+    TF -->|installs| ARGOINSTALL[ArgoCD Helm release]
+    ARGOINSTALL -->|kubectl apply, once| ROOT[Root Application + AppProject]
     APP -->|git commit image tag| GIT[GitOps manifests updated]
-    AWS -->|ArgoCD bootstrapped by Terraform| ARGO
     GIT -->|ArgoCD detects diff| ARGO[ArgoCD sync]
+    ROOT --> ARGO
     ARGO -->|Argo Rollouts| BG[Blue/Green Cutover]
 ```
 
@@ -122,6 +125,22 @@ flowchart TD
     W1 --> W2 --> W3 --> W4
 ```
 
+### Terraform / GitOps Ownership Boundary
+
+A Terraform-managed Kubernetes resource tracks the entire object, including fields ArgoCD rewrites continuously (sync status, health, last operation result). Keeping the Root Application and AppProject outside Terraform avoids those reconciliations being mistaken for configuration drift, and keeps the boundary between the two tools unambiguous:
+
+```mermaid
+flowchart LR
+    subgraph Terraform
+        A[VPC, EKS, ECR, RDS, IAM] --> B[ArgoCD Helm release]
+    end
+    subgraph GitOps
+        C[Root Application + AppProject\napplied once via kubectl] --> D[Child Applications]
+        D --> E[Platform services, security,\nobservability, online-boutique]
+    end
+    B -.bootstrap, once.-> C
+```
+
 ---
 
 ## 4. Repository Structure
@@ -132,7 +151,7 @@ aws-eks-devsecops-platform/
 ├── microservices-application/      # Online Boutique source code (11 services + protos)
 ├── platform/
 │   ├── infrastructure/terraform/   # IaC: bootstrap, environments, modules, OPA policies
-│   ├── gitops/                     # ArgoCD App of Apps + Kustomize manifests (dev/prod overlays)
+│   ├── gitops/                     # ArgoCD root-app.yaml + App of Apps + Kustomize manifests
 │   └── observability/              # Observability runbooks
 └── docs/                           # Architecture notes and diagram sources
 ```
@@ -199,7 +218,7 @@ Eleven ECR repositories — one per Online Boutique service — are provisioned 
 
 ### Amazon RDS
 
-A PostgreSQL 15.7 instance runs with a custom parameter group enabling connection, disconnection, DDL, and slow-query logging (threshold 1000ms). It is Single-AZ in dev and Multi-AZ in production. Automated backups are retained for 7 days with PITR, and Performance Insights is enabled.
+A PostgreSQL instance runs with a custom parameter group enabling connection, disconnection, DDL, and slow-query logging (threshold 1000ms). The parameter group family is matched to the configured engine version. It is Single-AZ in dev and Multi-AZ in production. Automated backups are retained for 7 days with PITR, and Performance Insights is enabled.
 
 ### IAM & IRSA
 
@@ -260,7 +279,7 @@ Triggered on push to `main` or manual dispatch. The pipeline runs `terraform pla
 
 ### ArgoCD Synchronization Flow
 
-The Root Application (created by the Terraform `argocd-bootstrap` module — no manual `kubectl apply` required) watches `platform/gitops/argocd/applications/` and manages four child Applications. ArgoCD polls Git roughly every three minutes, detects divergence, and reconciles via a Kustomize build followed by server-side apply. `selfHeal: true` means any out-of-band manual cluster change is automatically reverted to the Git-declared state.
+The Root Application — a static manifest at `platform/gitops/argocd/root-app.yaml`, applied once via `kubectl apply` after Terraform installs ArgoCD — watches `platform/gitops/argocd/applications/` and manages four child Applications. ArgoCD polls Git roughly every three minutes, detects divergence, and reconciles via a Kustomize build followed by server-side apply. `selfHeal: true` means any out-of-band manual cluster change is automatically reverted to the Git-declared state, and this applies to the Root Application itself once bootstrapped.
 
 ### Deployment Strategy
 
@@ -301,7 +320,7 @@ After blue has been scaled down, rollback happens by reverting the image tag com
 | `AWS_DEV_ROLE_ARN` | ARN of the IAM Role trusted via GitHub OIDC | `terraform-cd`, `app-cd`, `check-scan` |
 | `BUCKET_TF_STATE` | S3 bucket name from the bootstrap output | `terraform-cd`, `check-scan` |
 | `TF_VAR_DB_PASSWORD` | RDS master password | `terraform-cd` |
-| `GITOPS_REPO_URL` | Repository URL used by ArgoCD's bootstrap to configure the repo connection | `terraform-cd` |
+| `GITOPS_REPO_URL` | Repository URL used by the optional private-repo credentials secret | `terraform-cd` |
 | `GITOPS_BOT_TOKEN` | GitHub PAT with content read/write, used to commit image tag updates | `app-cd` |
 | `AWS_ACCOUNT_ID` | 12-digit AWS account ID for ECR URI construction | `app-cd` |
 | `SLACK_WEBHOOK_URL` | Incoming Webhook URL for pipeline notifications | All workflows |
@@ -507,7 +526,7 @@ terraform plan
 terraform apply
 ```
 
-> **Note:** Set `gitops_root_app_path = "platform/gitops/argocd/applications"` and `argocd_project_name = "platform"` in `terraform.tfvars` before apply. The variable defaults are incorrect.
+This provisions the VPC, EKS cluster, ECR repositories, RDS instance, and installs ArgoCD on the cluster. It does **not** create the Root Application — that is a separate, manual step below.
 
 ### Configure kubectl
 
@@ -525,19 +544,36 @@ kubectl get pods -n argocd  # expect ArgoCD pods Running
 
 ### Verify ArgoCD
 
-The Terraform `argocd-bootstrap` module installs ArgoCD and creates the Root Application automatically — no manual `kubectl apply` is required.
-
 ```bash
 kubectl port-forward svc/argocd-server -n argocd 8080:443
-kubectl get secret argocd-initial-admin-secret -n argocd \
-  -o jsonpath="{.data.password}" | base64 -d && echo
+
+[System.Text.Encoding]::UTF8.GetString(
+    [System.Convert]::FromBase64String(
+        (kubectl get secret argocd-initial-admin-secret -n argocd -o jsonpath="{.data.password}")
+    )
+)
+
+or 
+
+$pwd = kubectl get secret argocd-initial-admin-secret -n argocd -o jsonpath="{.data.password}"
+[System.Text.Encoding]::UTF8.GetString([System.Convert]::FromBase64String($pwd))
 ```
 
-Open `https://localhost:8080`. All four Applications (`platform-services`, `security`, `observability`, `online-boutique`) should reach `Synced / Healthy` within 5–10 minutes.
+Open `https://localhost:8080`.
+
+### Bootstrap the Root Application
+
+This step is required once per cluster, immediately after ArgoCD is installed. It creates the AppProject and the Root Application from a static manifest, after which ArgoCD reconciles both directly from Git:
+
+```bash
+kubectl apply -f platform/gitops/argocd/root-app.yaml
+```
 
 ```bash
 kubectl get applications -n argocd
 ```
+
+The Root Application should reach `Synced / Healthy`, and the four child Applications (`platform-services`, `security`, `observability`, `online-boutique`) should follow within 5–10 minutes.
 
 ### Deploy Application
 
