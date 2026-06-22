@@ -37,15 +37,15 @@ spec:
               cpu: 300m
               memory: 128Mi
           readinessProbe:
-            initialDelaySeconds: 15
-            periodSeconds: 10
-            exec:
-              command: ["/bin/grpc_health_probe", "-addr=:7070", "-rpc-timeout=5s"]
+            initialDelaySeconds: 20
+            periodSeconds: 15
+            grpc:
+              port: 7070
           livenessProbe:
-            initialDelaySeconds: 15
-            periodSeconds: 10
-            exec:
-              command: ["/bin/grpc_health_probe", "-addr=:7070", "-rpc-timeout=5s"]
+            initialDelaySeconds: 20
+            periodSeconds: 15
+            grpc:
+              port: 7070
           securityContext:
             allowPrivilegeEscalation: false
             readOnlyRootFilesystem: true
