@@ -74,18 +74,23 @@ resource "helm_release" "argocd" {
         }
       }
 
+      # ArgoCD config 
       configs = {
 
         params = {
           # ALB handles TLS — ArgoCD server runs plain HTTP internally
-          "server.insecure"       = tostring(var.argocd_server_insecure)
+          "server.insecure" = tostring(var.argocd_server_insecure)
         }
 
         cm = {
           # Track resources by annotation (safer than label tracking)
           "application.resourceTrackingMethod" = "annotation"
 
+          # Enable status badge on the ArgoCD UI
           "statusbadge.enabled" = "true"
+
+          # Allow Kustomize to render helmCharts blocks (required for platform-services, observability, security)
+          "kustomize.buildOptions" = "--enable-helm"
 
           # Exclude noisy Cilium resources from ArgoCD diff
           "resource.exclusions" = yamlencode([
@@ -95,8 +100,6 @@ resource "helm_release" "argocd" {
               clusters  = ["*"]
             }
           ])
-
-          "kustomize.enable-helm" = "true"
         }
 
         rbac = {
