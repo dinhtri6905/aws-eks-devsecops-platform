@@ -37,15 +37,15 @@ spec:
               cpu: 200m
               memory: 128Mi
           readinessProbe:
-            initialDelaySeconds: 10
-            periodSeconds: 5
-            exec:
-              command: ["/bin/grpc_health_probe", "-addr=:8080"]
+            initialDelaySeconds: 20
+            periodSeconds: 15
+            grpc:
+              port: 8080
           livenessProbe:
-            initialDelaySeconds: 15
-            periodSeconds: 20
-            exec:
-              command: ["/bin/grpc_health_probe", "-addr=:8080"]
+            initialDelaySeconds: 20
+            periodSeconds: 15
+            grpc:
+              port: 8080
           securityContext:
             allowPrivilegeEscalation: false
             readOnlyRootFilesystem: true
