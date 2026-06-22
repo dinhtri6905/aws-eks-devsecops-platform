@@ -79,7 +79,6 @@ resource "helm_release" "argocd" {
         params = {
           # ALB handles TLS — ArgoCD server runs plain HTTP internally
           "server.insecure"       = tostring(var.argocd_server_insecure)
-          "kustomize.enable-helm" = "true"
         }
 
         cm = {
@@ -96,6 +95,8 @@ resource "helm_release" "argocd" {
               clusters  = ["*"]
             }
           ])
+
+          "kustomize.enable-helm" = "true"
         }
 
         rbac = {
