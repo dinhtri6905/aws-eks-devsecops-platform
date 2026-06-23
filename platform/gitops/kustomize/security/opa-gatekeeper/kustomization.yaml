@@ -23,8 +23,8 @@ namespace: gatekeeper-system
 #   wave 2 — Constraints          (apply policies against registered CRDs)
 
 resources:
-  - https://raw.githubusercontent.com/open-policy-agent/gatekeeper/v3.17.1/deploy/crds.yaml
-
+  - https://raw.githubusercontent.com/open-policy-agent/gatekeeper/v3.17.1/deploy/gatekeeper.yaml
+  
   # ConstraintTemplates (CRDs)
   - templates/k8sdisallowprivileged.yaml
   - templates/k8snonroot.yaml
