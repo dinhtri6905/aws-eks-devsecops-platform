@@ -1,0 +1,14 @@
+# platform/gitops/kustomize/security/opa-gatekeeper/policies/kustomization.yaml
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: gatekeeper-system
+
+resources:
+  - constraints/allow-ecr-and-trusted-registries-only.yaml
+  - constraints/disallow-latest-tag.yaml
+  - constraints/disallow-privileged.yaml
+  - constraints/require-labels.yaml
+  - constraints/require-non-root.yaml
+  - constraints/require-read-only-root-filesystem.yaml
+  - constraints/require-resource-limits.yaml

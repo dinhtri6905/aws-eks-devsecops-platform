@@ -1,0 +1,33 @@
+# platform/gitops/argocd/applications/gatekeeper-policies.yaml
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: gatekeeper-policies
+  namespace: argocd
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+  labels:
+    platform-layer: security
+  annotations:
+    argocd.argoproj.io/sync-wave: "3"
+spec:
+  project: platform-project
+  source:
+    repoURL: https://github.com/dinhtri6905/aws-eks-devsecops-platform.git
+    targetRevision: main
+    path: platform/gitops/kustomize/security/opa-gatekeeper/policies
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: gatekeeper-system
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - ServerSideApply=true
+    retry:
+      limit: 10
+      backoff:
+        duration: 30s
+        factor: 2
+        maxDuration: 5m
