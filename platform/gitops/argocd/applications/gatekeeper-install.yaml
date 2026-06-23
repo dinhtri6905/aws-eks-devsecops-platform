@@ -1,48 +1,37 @@
+# platform/gitops/argocd/applications/gatekeeper-install.yaml
 apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:
-  name: security
+  name: gatekeeper-install
   namespace: argocd
   finalizers:
     - resources-finalizer.argocd.argoproj.io
   labels:
     platform-layer: security
   annotations:
-    # Deploy after platform-services (wave 1) — Gatekeeper webhooks must not block LBC install
     argocd.argoproj.io/sync-wave: "2"
-
 spec:
   project: platform-project
   source:
     repoURL: https://github.com/dinhtri6905/aws-eks-devsecops-platform.git
     targetRevision: main
-    path: platform/gitops/kustomize/security
-    # Deploys OPA Gatekeeper (with ConstraintTemplates/Constraints) and Falco (runtime threat detection) 
-    # components: trong ArgoCD Kustomize source dùng để reference Kustomize Component (một loại resource đặc biệt với kind: Component). Nhưng opa-gatekeeper và falco trong project là các folder thông thường với kind: Kustomization — không phải Component.
-    # kustomize:
-    #   components:
-    #     - opa-gatekeeper
-    #     - falco
-        
+    path: platform/gitops/kustomize/security/opa-gatekeeper/install
   destination:
     server: https://kubernetes.default.svc
-    namespace: security
+    namespace: gatekeeper-system
   syncPolicy:
     automated:
       prune: true
       selfHeal: true
     syncOptions:
       - CreateNamespace=true
-      - ApplyOutOfSyncOnly=true
       - ServerSideApply=true
-      - RespectIgnoreDifferences=true
     retry:
       limit: 5
       backoff:
-        duration: 5s
+        duration: 30s
         factor: 2
-        maxDuration: 3m
-  # Ignore Gatekeeper webhook caBundle — injected at runtime, not managed by Git
+        maxDuration: 5m
   ignoreDifferences:
     - group: admissionregistration.k8s.io
       kind: ValidatingWebhookConfiguration

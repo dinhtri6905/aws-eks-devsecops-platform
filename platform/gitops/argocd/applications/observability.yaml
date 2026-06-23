@@ -8,8 +8,7 @@ metadata:
   labels:
     platform-layer: observability
   annotations:
-    # Deploy after security (wave 2) — Gatekeeper policies will validate these workloads
-    argocd.argoproj.io/sync-wave: "3"
+    argocd.argoproj.io/sync-wave: "4"
 spec:
   project: platform-project
   # Deploys the kube-prometheus-stack (Prometheus, Grafana,

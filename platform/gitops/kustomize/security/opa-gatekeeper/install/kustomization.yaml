@@ -1,0 +1,15 @@
+# platform/gitops/kustomize/security/opa-gatekeeper/install/kustomization.yaml
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: gatekeeper-system
+
+resources:
+  - https://raw.githubusercontent.com/open-policy-agent/gatekeeper/v3.17.1/deploy/gatekeeper.yaml
+  - templates/k8sallowedrepos.yaml
+  - templates/k8sdisallowedtags.yaml
+  - templates/k8sdisallowprivileged.yaml
+  - templates/k8snonroot.yaml
+  - templates/k8sreadonlyrootfs.yaml
+  - templates/k8srequiredlabels.yaml
+  - templates/k8srequiredresources.yaml
