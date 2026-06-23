@@ -43,10 +43,10 @@ resources:
   - constraints/allow-ecr-and-trusted-registries-only.yaml
   - constraints/require-labels.yaml
 
-helmCharts:
-  - name: gatekeeper
-    repo: https://open-policy-agent.github.io/gatekeeper/charts
-    version: 3.17.1
-    releaseName: gatekeeper
-    namespace: gatekeeper-system
-    valuesFile: values.yaml
+# helmCharts:
+#   - name: gatekeeper
+#     repo: https://open-policy-agent.github.io/gatekeeper/charts
+#     version: 3.17.1
+#     releaseName: gatekeeper
+#     namespace: gatekeeper-system
+#     valuesFile: values.yaml
