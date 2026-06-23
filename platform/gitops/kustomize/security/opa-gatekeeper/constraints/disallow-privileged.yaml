@@ -1,5 +1,5 @@
 apiVersion: constraints.gatekeeper.sh/v1beta1
-kind: K8sDisallowPrivileged
+kind: K8sBlockPrivileged
 metadata:
   name: block-privileged-containers
   annotations:

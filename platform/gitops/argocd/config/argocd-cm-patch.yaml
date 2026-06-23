@@ -1,0 +1,27 @@
+# platform/gitops/argocd/config/argocd-cm-patch.yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: argocd-cm
+  namespace: argocd
+data:
+  resource.customizations.health.templates.gatekeeper.sh_ConstraintTemplate: |
+    hs = {}
+    if obj.status ~= nil then
+      for _, condition in ipairs(obj.status.conditions or {}) do
+        if condition.type == "Ready" then
+          if condition.status == "True" then
+            hs.status = "Healthy"
+            hs.message = "CRD established"
+            return hs
+          else
+            hs.status = "Degraded"
+            hs.message = condition.message
+            return hs
+          end
+        end
+      end
+    end
+    hs.status = "Progressing"
+    hs.message = "Waiting for CRD to be established"
+    return hs
