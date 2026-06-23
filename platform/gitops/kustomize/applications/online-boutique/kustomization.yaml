@@ -20,4 +20,4 @@ resources:
   - recommendationservice
   - redis-cart
   - shippingservice
-  - shoppingassistantservice
+  # - shoppingassistantservice
