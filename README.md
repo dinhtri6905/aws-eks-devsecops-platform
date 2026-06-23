@@ -507,7 +507,7 @@ Run once to create the S3 bucket, DynamoDB lock table, and KMS key:
 
 ```bash
 cd platform/infrastructure/terraform/bootstrap
-terraform init && terraform plan && terraform apply
+terraform init; terraform plan; terraform apply
 ```
 
 Note the outputs, then configure `environments/dev/backend.tf` with the bucket name and table name.
