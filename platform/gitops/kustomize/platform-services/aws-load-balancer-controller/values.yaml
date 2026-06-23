@@ -12,7 +12,8 @@
 clusterName: eks-devsecops-dev-cluster
 
 region: ap-southeast-1
-vpcId: "" # filled by overlay patch from terraform output `vpc_id`, or set explicitly
+vpcId: "vpc-0fd2d693c39ce8b7e" 
+# filled by overlay patch from terraform output `vpc_id`, or set explicitly
 # Terraform chịu trách nhiệm tạo VPC/EKS và export các thông tin hạ tầng như vpc_id, region, cluster_name thông qua output.
 # Không hardcode vpcId trong GitOps base (values.yaml để trống).
 # Sau khi Terraform hoàn tất, CI/CD pipeline sẽ lấy output từ Terraform và inject vào environment overlay (overlays/dev|prod).
@@ -29,7 +30,7 @@ serviceAccount:
   create: true
   name: aws-load-balancer-controller
   annotations:
-    eks.amazonaws.com/role-arn: "arn:aws:iam::041659741748:role/eks-devsecops-dev-alb-controller-role"
+    eks.amazonaws.com/role-arn: "arn:aws:iam::041659741748:role/eks-devsecops-dev-aws-lbc-role"
 
 # Disable the controller's own webhook cert auto-generation
 # only if cert-manager is used instead. Default (true) is fine
