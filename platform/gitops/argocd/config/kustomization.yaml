@@ -1,0 +1,11 @@
+# platform/gitops/argocd/config/kustomization.yaml
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+resources: []
+
+patches:
+  - path: argocd-cm-patch.yaml
+    target:
+      kind: ConfigMap
+      name: argocd-cm

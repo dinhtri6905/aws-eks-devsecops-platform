@@ -1,0 +1,23 @@
+# platform/gitops/argocd/applications/argocd-config.yaml
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: argocd-config
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "0"    # trước tất cả, wave sớm nhất
+spec:
+  project: platform-project
+  source:
+    repoURL: https://github.com/dinhtri6905/aws-eks-devsecops-platform.git
+    targetRevision: main
+    path: platform/gitops/argocd/config
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: argocd
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - ServerSideApply=true
