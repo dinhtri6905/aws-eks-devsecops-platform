@@ -35,3 +35,8 @@ variable "single_nat_gateway" {
   EOT
   type        = bool
 }
+
+variable "cluster_name" {
+  description = "EKS cluster name, used for kubernetes.io/cluster/<name> resource tags"
+  type        = string
+}

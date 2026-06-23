@@ -8,14 +8,6 @@ metadata:
       Requires the specified labels to be present on an
       object's metadata. Used to enforce the 'app' label
       on all Online Boutique workloads for traceability.
-  # annotations:
-  #   description: >-
-  #     Requires the specified labels to be present on an
-  #     object's metadata, with values matching the provided
-  #     regular expressions (if any). Used to enforce
-  #     app.kubernetes.io/name and app.kubernetes.io/part-of on
-  #     all Online Boutique workloads for traceability and
-  #     ownership.
 spec:
   crd:
     spec:

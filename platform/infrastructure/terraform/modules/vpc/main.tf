@@ -29,7 +29,7 @@ resource "aws_vpc" "main" {
 
     # Required tag for EKS and AWS Load Balancer Controller
     # to discover and use this VPC
-    "kubernetes.io/cluster/${local.name_prefix}" = "shared"
+    "kubernetes.io/cluster/${var.cluster_name}" = "shared"
   }
 }
 
@@ -63,7 +63,7 @@ resource "aws_subnet" "public" {
     # Tag used by AWS Load Balancer Controller to automatically
     # discover public subnets for internet-facing ALBs
     "kubernetes.io/role/elb"                     = "1"
-    "kubernetes.io/cluster/${local.name_prefix}" = "shared"
+    "kubernetes.io/cluster/${var.cluster_name}" = "shared"
   }
 }
 
@@ -85,7 +85,7 @@ resource "aws_subnet" "private" {
     # Tag used by AWS Load Balancer Controller to automatically
     # discover private subnets for internal ALBs
     "kubernetes.io/role/internal-elb"            = "1"
-    "kubernetes.io/cluster/${local.name_prefix}" = "shared"
+    "kubernetes.io/cluster/${var.cluster_name}" = "shared"
   }
 }
 

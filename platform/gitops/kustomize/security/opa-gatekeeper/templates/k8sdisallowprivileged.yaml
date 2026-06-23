@@ -4,7 +4,6 @@ metadata:
   name: k8sblockprivileged
   annotations:
     argocd.argoproj.io/sync-wave: "1"
-  annotations:
     description: >-
       Denies any Pod that requests privileged mode via
       securityContext.privileged.
