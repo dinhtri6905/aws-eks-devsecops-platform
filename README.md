@@ -533,6 +533,8 @@ This provisions the VPC, EKS cluster, ECR repositories, RDS instance, and instal
 ```bash
 aws eks update-kubeconfig --region ap-southeast-1 --name eks-devsecops-dev-cluster
 kubectl get nodes  # expect 2 nodes in Ready state
+
+D:\PERSONAL_PROJECT\PROJECT_3\aws-eks-devsecops-platform\platform\gitops\kustomize\platform-services\aws-load-balancer-controller\values.yaml
 ```
 
 ### Verify EKS Cluster
