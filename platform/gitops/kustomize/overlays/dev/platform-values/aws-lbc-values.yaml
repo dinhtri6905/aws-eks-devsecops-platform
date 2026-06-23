@@ -1,6 +1,4 @@
 # overlays/dev/platform-values/aws-lbc-values.yaml
-clusterName: dev-eks
-
+clusterName: eks-devsecops-dev-cluster
 region: ap-southeast-1
-
 vpcId: vpc-0123456789abcdef
