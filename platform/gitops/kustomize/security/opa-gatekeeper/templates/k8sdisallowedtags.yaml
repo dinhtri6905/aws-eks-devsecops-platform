@@ -4,7 +4,6 @@ metadata:
   name: k8sdisallowedtags
   annotations:
     argocd.argoproj.io/sync-wave: "1"
-  annotations:
     description: >-
       Disallows container images using mutable/ambiguous tags
       such as ':latest' or images with no tag at all, to

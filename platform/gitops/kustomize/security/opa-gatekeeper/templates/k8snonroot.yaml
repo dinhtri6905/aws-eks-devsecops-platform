@@ -4,7 +4,6 @@ metadata:
   name: k8srequirenonroot
   annotations:
     argocd.argoproj.io/sync-wave: "1"
-  annotations:
     description: >-
       Requires Pods/containers to set
       securityContext.runAsNonRoot: true, following container
