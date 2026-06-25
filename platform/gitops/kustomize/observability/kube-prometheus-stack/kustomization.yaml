@@ -38,3 +38,7 @@ resources:
   # ServiceMonitors — tells Prometheus what to scrape
   - servicemonitors/kubernetes.yaml
   - servicemonitors/online-boutique.yaml
+
+# Patches
+patchesStrategicMerge:
+  - remove-presync-hooks.yaml
