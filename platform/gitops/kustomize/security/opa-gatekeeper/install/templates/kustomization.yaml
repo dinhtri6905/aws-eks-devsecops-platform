@@ -1,0 +1,11 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+resources:
+  - k8sallowedrepos.yaml
+  - k8sdisallowedtags.yaml
+  - k8sdisallowprivileged.yaml
+  - k8snonroot.yaml
+  - k8sreadonlyrootfs.yaml
+  - k8srequiredlabels.yaml
+  - k8srequiredresources.yaml
