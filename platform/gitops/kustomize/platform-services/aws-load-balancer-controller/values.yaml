@@ -12,7 +12,7 @@
 clusterName: eks-devsecops-dev-cluster
 
 region: ap-southeast-1
-vpcId: "vpc-0aa9f8052389ecbe6" 
+vpcId: "vpc-041e7d103bbed7e16" 
 # filled by overlay patch from terraform output `vpc_id`, or set explicitly
 # Terraform chịu trách nhiệm tạo VPC/EKS và export các thông tin hạ tầng như vpc_id, region, cluster_name thông qua output.
 # Không hardcode vpcId trong GitOps base (values.yaml để trống).

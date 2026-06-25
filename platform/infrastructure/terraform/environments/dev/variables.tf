@@ -99,7 +99,7 @@ variable "node_instance_types" {
 variable "node_desired_size" {
   description = "Desired number of worker nodes"
   type        = number
-  default     = 2
+  default     = 3
 }
 
 variable "node_min_size" {
