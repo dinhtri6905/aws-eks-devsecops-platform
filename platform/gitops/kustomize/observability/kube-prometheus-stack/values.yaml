@@ -239,3 +239,11 @@ kubeProxy:
   enabled: false
 kubeEtcd:
   enabled: false
+
+# ============================================================
+# PROMETHEUS OPERATOR
+# Disable admission webhooks to prevent PreSync hook blocking
+# ============================================================
+prometheus-operator:
+  admissionWebhooks:
+    enabled: false
