@@ -38,10 +38,3 @@ resources:
   # ServiceMonitors — tells Prometheus what to scrape
   - servicemonitors/kubernetes.yaml
   - servicemonitors/online-boutique.yaml
-
-# Remove PreSync hook resources from Helm chart to prevent deployment blocking
-commonLabels:
-  app.kubernetes.io/managed-by: kustomize
-
-resources:
-  - remove-job-hook.yaml
