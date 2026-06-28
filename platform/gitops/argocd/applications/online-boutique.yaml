@@ -8,8 +8,7 @@ metadata:
   labels:
     platform-layer: applications
   annotations:
-    # Deploy last (wave 5) — platform + security + observability must be ready first
-    argocd.argoproj.io/sync-wave: "5"
+    argocd.argoproj.io/sync-wave: "7"
 spec:
   project: platform-project
   # Deploys the Online Boutique microservices application.
