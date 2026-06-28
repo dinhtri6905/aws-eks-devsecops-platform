@@ -8,7 +8,7 @@ metadata:
   labels:
     platform-layer: observability
   annotations:
-    argocd.argoproj.io/sync-wave: "4"
+    argocd.argoproj.io/sync-wave: "6"
 spec:
   project: platform-project
   # Deploys the kube-prometheus-stack (Prometheus, Grafana,

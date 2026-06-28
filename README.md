@@ -152,7 +152,6 @@ aws-eks-devsecops-platform/
 ├── platform/
 │   ├── infrastructure/terraform/   # IaC: bootstrap, environments, modules, OPA policies
 │   ├── gitops/                     # ArgoCD root-app.yaml + App of Apps + Kustomize manifests
-│   └── observability/              # Observability runbooks
 └── docs/                           # Architecture notes and diagram sources
 ```
 
@@ -523,7 +522,7 @@ cd platform/infrastructure/terraform/environments/dev
 
 terraform init
 terraform plan
-terraform apply
+terraform apply -auto-approve
 ```
 
 This provisions the VPC, EKS cluster, ECR repositories, RDS instance, and installs ArgoCD on the cluster. It does **not** create the Root Application — that is a separate, manual step below.
