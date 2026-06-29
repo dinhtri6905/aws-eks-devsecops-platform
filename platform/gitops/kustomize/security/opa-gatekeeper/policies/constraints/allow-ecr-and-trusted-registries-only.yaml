@@ -25,3 +25,4 @@ spec:
       - "registry.k8s.io/"
       - "quay.io/jetstack/"
       - "ghcr.io/falcosecurity/"
+      - "gcr.io/google-samples/"

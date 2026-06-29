@@ -4,6 +4,8 @@ metadata:
   name: paymentservice
   labels:
     app: paymentservice
+    app.kubernetes.io/name: paymentservice
+    app.kubernetes.io/part-of: aws-eks-devsecops-platform
 spec:
   selector:
     matchLabels:
@@ -12,6 +14,8 @@ spec:
     metadata:
       labels:
         app: paymentservice
+        app.kubernetes.io/name: paymentservice
+        app.kubernetes.io/part-of: aws-eks-devsecops-platform
     spec:
       securityContext:
         runAsNonRoot: true
