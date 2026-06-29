@@ -25,7 +25,7 @@ spec:
       restartPolicy: Always
       initContainers:
         - name: wait-frontend
-          image: busybox:1.35
+          image: docker.io/library/busybox:1.35
           command:
             - sh
             - -c
