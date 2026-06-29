@@ -26,3 +26,4 @@ spec:
       - "quay.io/jetstack/"
       - "ghcr.io/falcosecurity/"
       - "gcr.io/google-samples/"
+      - "docker.io/library/"
