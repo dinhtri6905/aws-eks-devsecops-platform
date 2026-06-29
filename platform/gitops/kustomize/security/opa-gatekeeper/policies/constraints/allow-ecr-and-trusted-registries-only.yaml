@@ -27,3 +27,5 @@ spec:
       - "ghcr.io/falcosecurity/"
       - "gcr.io/google-samples/"
       - "docker.io/library/"
+      - "busybox"
+      - "redis" 
