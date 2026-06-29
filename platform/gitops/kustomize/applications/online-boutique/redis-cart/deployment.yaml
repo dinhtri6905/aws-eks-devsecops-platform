@@ -4,6 +4,8 @@ metadata:
   name: redis-cart
   labels:
     app: redis-cart
+    app.kubernetes.io/name: redis-cart
+    app.kubernetes.io/part-of: aws-eks-devsecops-platform
 spec:
   selector:
     matchLabels:
@@ -12,6 +14,8 @@ spec:
     metadata:
       labels:
         app: redis-cart
+        app.kubernetes.io/name: redis-cart
+        app.kubernetes.io/part-of: aws-eks-devsecops-platform
     spec:
       securityContext:
         runAsNonRoot: true

@@ -4,6 +4,8 @@ metadata:
   name: shippingservice
   labels:
     app: shippingservice
+    app.kubernetes.io/name: shippingservice
+    app.kubernetes.io/part-of: aws-eks-devsecops-platform
 spec:
   selector:
     matchLabels:
@@ -12,6 +14,8 @@ spec:
     metadata:
       labels:
         app: shippingservice
+        app.kubernetes.io/name: shippingservice
+        app.kubernetes.io/part-of: aws-eks-devsecops-platform
     spec:
       securityContext:
         runAsNonRoot: true
