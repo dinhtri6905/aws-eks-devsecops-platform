@@ -370,7 +370,7 @@ The role referenced by `AWS_DEV_ROLE_ARN` must trust GitHub's OIDC provider. Min
     {
       "Effect": "Allow",
       "Principal": {
-        "Federated": "arn:aws:iam::<ACCOUNT_ID>:oidc-provider/token.actions.githubusercontent.com"
+        "Federated": "arn:aws:iam::041659741748:oidc-provider/token.actions.githubusercontent.com"
       },
       "Action": "sts:AssumeRoleWithWebIdentity",
       "Condition": {
@@ -378,7 +378,7 @@ The role referenced by `AWS_DEV_ROLE_ARN` must trust GitHub's OIDC provider. Min
           "token.actions.githubusercontent.com:aud": "sts.amazonaws.com"
         },
         "StringLike": {
-          "token.actions.githubusercontent.com:sub": "repo:<your-org>/<your-repo>:*"
+          "token.actions.githubusercontent.com:sub": "repo:dinhtri6905/aws-eks-devsecops-platform:*"
         }
       }
     }

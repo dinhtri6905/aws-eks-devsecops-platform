@@ -1,0 +1,12 @@
+# terraform.tfvars.example
+# -------------------------------------------------------
+# Copy this file to terraform.tfvars and fill in your values.
+#
+#   cp terraform.tfvars.example terraform.tfvars
+#
+# terraform.tfvars is excluded from Git via .gitignore.
+# -------------------------------------------------------
+
+aws_region  = "ap-southeast-1"   # AWS region to create the OIDC provider and IAM role
+github_org  = "your-org-name"    # GitHub organization name or personal username
+github_repo = "your-repo-name"   # Repository name only — without the org prefix
