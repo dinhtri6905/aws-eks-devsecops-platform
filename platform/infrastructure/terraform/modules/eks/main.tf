@@ -9,8 +9,10 @@ data "aws_partition" "current" {}
 # Provision before the cluster so retention is controlled by Terraform
 # ============================================================
 resource "aws_cloudwatch_log_group" "eks" {
+  #checkov:skip=CKV_AWS_158:AWS-managed encryption is sufficient for this educational project.
+
   name              = "/aws/eks/${var.cluster_name}/cluster"
-  retention_in_days = 7
+  retention_in_days = 365
 
   tags = {
     Name = "/aws/eks/${var.cluster_name}/cluster"
@@ -21,6 +23,9 @@ resource "aws_cloudwatch_log_group" "eks" {
 # EKS CLUSTER
 # ============================================================
 resource "aws_eks_cluster" "main" {
+  #checkov:skip=CKV_AWS_39:Public endpoint is required for local administration and CI/CD.
+  #checkov:skip=CKV_AWS_38:Public endpoint CIDR cannot be restricted because the cluster is accessed from dynamic GitHub Actions runners and local development.
+
   name     = var.cluster_name
   version  = var.kubernetes_version
   role_arn = var.cluster_role_arn
@@ -36,6 +41,14 @@ resource "aws_eks_cluster" "main" {
   access_config {
     authentication_mode                         = "API_AND_CONFIG_MAP"
     bootstrap_cluster_creator_admin_permissions = true
+  }
+
+  encryption_config {
+    resources = ["secrets"]
+
+    provider {
+      key_arn = aws_kms_key.eks.arn
+    }
   }
 
   # enable logging to easy debug

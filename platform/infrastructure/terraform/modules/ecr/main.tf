@@ -9,6 +9,8 @@ data "aws_partition" "current" {}
 # ECR REPOSITORIES
 # ============================================================
 resource "aws_ecr_repository" "this" {
+  #checkov:skip=CKV_AWS_136:AWS managed AES256 encryption is sufficient for this educational DevSecOps project.
+
   for_each = toset(var.repository_names)
 
   name                 = "${local.name_prefix}/${each.value}"

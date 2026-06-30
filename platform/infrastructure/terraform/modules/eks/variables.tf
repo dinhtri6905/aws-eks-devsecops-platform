@@ -91,11 +91,9 @@ variable "node_disk_size" {
 variable "cluster_endpoint_public_access" {
   description = "Enable public access to the Kubernetes API server endpoint"
   type        = bool
-  # default     = true
 }
 
 variable "cluster_endpoint_private_access" {
   description = "Enable private access to the Kubernetes API server endpoint within the VPC"
   type        = bool
-  # default     = true
 }

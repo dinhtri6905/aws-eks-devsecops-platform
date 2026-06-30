@@ -11,6 +11,9 @@ data "aws_partition" "current" {}
 # https://raw.githubusercontent.com/kubernetes-sigs/aws-load-balancer-controller/v2.7.2/docs/install/iam_policy.json
 # ============================================================
 resource "aws_iam_policy" "lbc" {
+  #checkov:skip=CKV_AWS_290:AWS Load Balancer Controller requires broad permissions provided by AWS official policy.
+  #checkov:skip=CKV_AWS_355:AWS official policy uses Resource "*" because resources are created dynamically.
+
   name        = "${local.name_prefix}-aws-lbc-policy"
   description = "IAM policy for the AWS Load Balancer Controller running on EKS cluster ${var.cluster_name}"
   path        = "/"
