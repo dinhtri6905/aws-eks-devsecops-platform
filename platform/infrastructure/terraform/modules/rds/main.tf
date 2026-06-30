@@ -26,6 +26,11 @@ resource "aws_db_parameter_group" "main" {
   description = "Custom parameter group for PostgreSQL 15"
 
   parameter {
+    name  = "rds.force_ssl"
+    value = "1"
+  }
+
+  parameter {
     name  = "log_connections"
     value = "1"
   }
@@ -125,6 +130,8 @@ resource "aws_db_instance" "main" {
   # Apply changes immediately in non-prod
   apply_immediately          = true
   auto_minor_version_upgrade = true
+
+  copy_tags_to_snapshot = true
 
   tags = {
     Name = var.db_identifier
