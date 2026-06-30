@@ -20,6 +20,8 @@ locals {
 # VPC
 # ===========================================================
 resource "aws_vpc" "main" {
+  #checkov:skip=CKV2_AWS_11:VPC Flow Logs are intentionally disabled to reduce CloudWatch storage costs in this educational environment.
+
   cidr_block           = var.vpc_cidr
   enable_dns_hostnames = true
   enable_dns_support   = true
@@ -49,6 +51,8 @@ resource "aws_internet_gateway" "main" {
 # Used for: Internet-facing ALB, NAT Gateway
 # ===========================================================
 resource "aws_subnet" "public" {
+  #checkov:skip=CKV_AWS_130:Public subnets intentionally assign public IPs for internet-facing Application Load Balancers in this EKS architecture.
+
   count = length(var.public_subnet_cidrs)
 
   vpc_id                  = aws_vpc.main.id

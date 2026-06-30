@@ -6,6 +6,8 @@ locals {
 # EKS CONTROL PLANE SECURITY GROUP
 # ============================================================
 resource "aws_security_group" "eks_control_plane" {
+  #checkov:skip=CKV2_AWS_5:Security Group is attached by dependent Terraform resources in other modules.
+
   name        = "${local.name_prefix}-eks-control-plane-sg"
   description = "Security Group for EKS Control Plane - manages access to the Kubernetes API Server"
   vpc_id      = var.vpc_id
@@ -45,6 +47,8 @@ resource "aws_security_group_rule" "control_plane_egress_all" {
 # EKS NODES SECURITY GROUP
 # ============================================================
 resource "aws_security_group" "eks_nodes" {
+  #checkov:skip=CKV2_AWS_5:Security Group is attached by dependent Terraform resources in other modules.
+
   name        = "${local.name_prefix}-eks-nodes-sg"
   description = "Security Group for EKS Managed Worker Nodes - controls intra-node and API communication"
   vpc_id      = var.vpc_id
@@ -114,6 +118,8 @@ resource "aws_security_group_rule" "nodes_egress_all" {
 # ALB SECURITY GROUP
 # ============================================================
 resource "aws_security_group" "alb" {
+  #checkov:skip=CKV2_AWS_5:Security Group is attached by dependent Terraform resources in other modules.
+
   name        = "${local.name_prefix}-alb-sg"
   description = "Security Group for Application Load Balancer - allows HTTP/HTTPS from the internet"
   vpc_id      = var.vpc_id
@@ -165,6 +171,8 @@ resource "aws_security_group_rule" "alb_egress_all" {
 # RDS SECURITY GROUP
 # ============================================================
 resource "aws_security_group" "rds" {
+  #checkov:skip=CKV2_AWS_5:Security Group is attached by dependent Terraform resources in other modules.
+
   name        = "${local.name_prefix}-rds-sg"
   description = "Security Group for RDS PostgreSQL - allows inbound only from EKS worker nodes"
   vpc_id      = var.vpc_id
