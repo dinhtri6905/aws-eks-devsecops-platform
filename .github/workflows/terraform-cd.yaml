@@ -113,13 +113,24 @@ jobs:
       - name: Terraform plan
         id: plan
         run: |
+          # `set +e` is required: GitHub Actions bash steps run with
+          # `set -eo pipefail` by default. With pipefail on, `terraform plan`
+          # exiting 2 (changes present, via -detailed-exitcode) makes the
+          # whole `... | tee ...` pipeline "fail", and errexit then aborts
+          # the script BEFORE the `echo exitcode=...` line below ever runs —
+          # so the plan_exitcode output silently stays empty/0 even when
+          # there genuinely are changes to apply.
+          set +e
           terraform plan \
             -out=tfplan \
             -input=false \
             -no-color \
             -detailed-exitcode \
             2>&1 | tee ${{ runner.temp }}/tf-plan.txt
-          echo "exitcode=${PIPESTATUS[0]}" >> $GITHUB_OUTPUT
+          EXITCODE=${PIPESTATUS[0]}
+          set -e
+          echo "exitcode=${EXITCODE}" >> $GITHUB_OUTPUT
+          echo "Terraform plan exit code: ${EXITCODE}"
         env:
           TF_VAR_gitops_repo_url: ${{ secrets.GITOPS_REPO_URL }}
         continue-on-error: true
