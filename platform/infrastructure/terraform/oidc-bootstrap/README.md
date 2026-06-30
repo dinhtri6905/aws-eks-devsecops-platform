@@ -68,7 +68,7 @@ Expected output:
 ### 3. Navigate to this directory
 
 ```bash
-cd infrastructure/terraform/oidc-bootstrap
+cd platform\infrastructure\terraform\oidc-bootstrap
 ```
 
 ### 4. Initialise Terraform
