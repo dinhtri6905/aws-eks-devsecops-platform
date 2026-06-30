@@ -58,6 +58,11 @@ resource "aws_db_parameter_group" "main" {
 # RDS INSTANCE — PostgreSQL
 # ============================================================
 resource "aws_db_instance" "main" {
+  #checkov:skip=CKV_AWS_354:Performance Insights is disabled for this cost-optimized development environment.
+  #checkov:skip=CKV_AWS_118:Enhanced Monitoring is disabled to reduce operational cost in this educational environment.
+  #checkov:skip=CKV_AWS_157:Single-AZ deployment is sufficient for this educational DevSecOps project.
+  #checkov:skip=CKV_AWS_293:Deletion protection is intentionally disabled to support automated Terraform destroy in development.
+
   identifier = var.db_identifier
 
   # Engine

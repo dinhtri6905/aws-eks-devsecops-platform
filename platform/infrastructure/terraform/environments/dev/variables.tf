@@ -144,7 +144,7 @@ variable "ecr_repository_names" {
 variable "image_tag_mutability" {
   description = "Image tag mutability: MUTABLE allows overwriting tags, IMMUTABLE prevents it"
   type        = string
-  default     = "MUTABLE"
+  default     = "IMMUTABLE"
 }
 
 variable "scan_on_push" {

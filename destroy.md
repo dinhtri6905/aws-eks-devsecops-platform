@@ -1,68 +1,339 @@
-Thứ tự destroy chuẩn
-Bước 1 — Xóa ArgoCD Applications (để ArgoCD tự dọn K8s resources)
-powershell# Xóa Root Application — ArgoCD sẽ cascade delete toàn bộ child apps
-# và mọi resource K8s chúng quản lý (Deployments, Services, Ingress...)
-kubectl delete application eks-devsecops-dev-root -n argocd
+# Destroy Guide - AWS EKS DevSecOps Platform
 
-# Đợi cho đến khi tất cả child applications biến mất
+> **Objective:** Safely destroy the entire infrastructure while preventing orphaned resources (especially ALBs, ENIs, and NAT Gateways) from causing Terraform failures or unnecessary AWS charges.
+
+---
+
+# Prerequisites
+
+Before starting, ensure that:
+
+- You have backed up any required data.
+- No critical workloads are running on the cluster.
+- AWS CLI is authenticated.
+- `kubectl` is configured to access the correct EKS cluster.
+- You are working in the correct Terraform environment (`dev`).
+
+---
+
+# Step 1 - Delete ArgoCD Applications
+
+Delete the **Root Application** so ArgoCD can automatically cascade delete all child applications and Kubernetes resources it manages.
+
+```powershell
+kubectl delete application eks-devsecops-dev-root -n argocd
+```
+
+Monitor the deletion process:
+
+```powershell
 kubectl get applications -n argocd --watch
-Đợi cho đến khi không còn application nào — có thể mất 3–5 phút vì ArgoCD phải cascade delete từng resource theo resources-finalizer.argocd.argoproj.io.
-powershell# Xác nhận các namespace workload đã sạch
+```
+
+Wait until **no Applications remain**.
+
+> **Note:** This process typically takes **3–5 minutes** because ArgoCD removes resources through `resources-finalizer.argocd.argoproj.io`.
+
+Verify that workload namespaces are empty:
+
+```powershell
 kubectl get pods -n online-boutique
 kubectl get pods -n monitoring
 kubectl get pods -n gatekeeper-system
 kubectl get pods -n falco
-Bước 2 — Xóa AppProject
-powershellkubectl delete appproject platform-project -n argocd
-Bước 3 — Xóa các LoadBalancer trước khi destroy Terraform
-AWS ALB được tạo bởi AWS Load Balancer Controller (K8s), không phải Terraform — nếu destroy Terraform ngay, VPC sẽ không xóa được vì còn ENI của ALB treo lại.
-powershell# Kiểm tra còn Ingress nào không
+```
+
+Expected output:
+
+```text
+No resources found
+```
+
+---
+
+# Step 2 - Delete the ArgoCD AppProject
+
+After all Applications have been removed:
+
+```powershell
+kubectl delete appproject platform-project -n argocd
+```
+
+---
+
+# Step 3 - Delete Remaining Load Balancers
+
+AWS Load Balancer Controller creates **Application Load Balancers (ALBs)** from Kubernetes Ingress resources.
+
+If Terraform is destroyed before the ALBs are removed, their attached ENIs may prevent the VPC from being deleted.
+
+Check for remaining Ingress resources:
+
+```powershell
 kubectl get ingress -A
+```
 
-# Xóa hết nếu còn sót
+If any still exist:
+
+```powershell
 kubectl delete ingress --all -n online-boutique
-Đợi ALB biến mất trên AWS Console (EC2 → Load Balancers) trước khi qua bước tiếp theo — thường mất 1–2 phút.
-Bước 4 — Xóa ArgoCD khỏi Terraform state và uninstall
-powershellcd platform/infrastructure/terraform/environments/dev
+```
 
-# Gỡ ArgoCD resources khỏi state trước (nếu còn)
-terraform state rm "module.argocd-bootstrap.kubernetes_manifest.argocd_root_app" 2>$null
-terraform state rm "module.argocd-bootstrap.kubernetes_manifest.argocd_project" 2>$null
-Bước 5 — Terraform destroy toàn bộ infrastructure
-Option A — GitHub Actions (nếu pipeline còn hoạt động):
-Trigger terraform-cd.yaml manually với action: destroy — pipeline sẽ yêu cầu approval từ 2 reviewers (vì dev-destroy environment được bảo vệ).
-Option B — Manual:
-powershellcd platform/infrastructure/terraform/environments/dev
+Optionally verify that no `LoadBalancer` Services remain:
 
+```powershell
+kubectl get svc -A
+```
+
+Wait approximately **1–2 minutes** for AWS to delete the ALB.
+
+Confirm in the AWS Console:
+
+```
+EC2
+└── Load Balancers
+```
+
+Proceed only after all ALBs have disappeared.
+
+---
+
+# Step 4 - Remove ArgoCD Resources from Terraform State
+
+Navigate to the Terraform environment:
+
+```powershell
+cd .\platform\infrastructure\terraform\environments\dev
+```
+
+List the current Terraform state:
+
+```powershell
+terraform state list
+```
+
+If the following resources still exist in the state, remove them:
+
+```powershell
+terraform state rm module.argocd-bootstrap.kubernetes_manifest.argocd_root_app
+```
+
+```powershell
+terraform state rm module.argocd-bootstrap.kubernetes_manifest.argocd_project
+```
+
+> **Note**
+>
+> These commands remove resources **only from the Terraform state**. They do **not** delete Kubernetes resources.
+
+---
+
+# Step 5 - Destroy Infrastructure
+
+## Option A - GitHub Actions (Recommended)
+
+Trigger the GitHub Actions workflow:
+
+```
+terraform-cd.yaml
+```
+
+Choose:
+
+```
+destroy
+```
+
+If the `dev-destroy` environment is protected, the workflow will require approval from two reviewers.
+
+---
+
+## Option B - Manual
+
+Navigate to the Terraform environment:
+
+```powershell
+cd .\platform\infrastructure\terraform\environments\dev
+```
+
+(Optional) Verify the current workspace:
+
+```powershell
+terraform workspace show
+```
+
+(Optional) Review the destroy plan:
+
+```powershell
+terraform plan -destroy
+```
+
+Destroy the infrastructure:
+
+```powershell
 terraform destroy
-Gõ yes khi được hỏi. Quá trình này mất khoảng 15–20 phút, thứ tự destroy Terraform tự tính toán nhưng thường là:
-EKS Node Group → EKS Addons → EKS Cluster
-→ RDS → ECR → ALB resources
-→ NAT Gateway → Subnets → VPC
-→ IAM Roles → CloudWatch Log Groups
-→ Security Groups
-Bước 6 — Xóa Terraform Backend (tuỳ chọn)
-Nếu muốn xóa luôn S3 bucket và DynamoDB lock table (được tạo bởi bootstrap module, không nằm trong environments/dev state):
-powershellcd platform/infrastructure/terraform/bootstrap
+```
+
+Or skip the confirmation prompt:
+
+```powershell
+terraform destroy -auto-approve
+```
+
+The destroy process usually takes **15–20 minutes**.
+
+Terraform automatically destroys resources according to dependency order, typically:
+
+```text
+EKS Node Groups
+        ↓
+EKS Add-ons
+        ↓
+EKS Cluster
+        ↓
+RDS
+        ↓
+ECR
+        ↓
+ALB Resources
+        ↓
+NAT Gateway
+        ↓
+Subnets
+        ↓
+VPC
+        ↓
+IAM Roles
+        ↓
+CloudWatch Log Groups
+        ↓
+Security Groups
+```
+
+---
+
+# Step 6 - Destroy Terraform Backend (Optional)
+
+> **Perform this step only if you want to remove the Terraform backend completely.**
+
+Navigate to the bootstrap directory:
+
+```powershell
+cd ..\..\bootstrap
+```
+
+(Optional) Review the destroy plan:
+
+```powershell
+terraform plan -destroy
+```
+
+Destroy the backend:
+
+```powershell
 terraform destroy
+```
 
-Cảnh báo: Bước này xóa hoàn toàn Terraform state — không thể recover. Chỉ chạy khi chắc chắn đã destroy xong toàn bộ resources ở Bước 5.
+> ⚠️ **Warning**
+>
+> This permanently deletes:
+>
+> - Terraform State S3 Bucket
+> - DynamoDB Lock Table
+>
+> After completion, the Terraform state cannot be recovered.
+>
+> Only perform this step after **Step 5** has completed successfully.
 
+---
 
-Checklist xác nhận đã xóa sạch
-Sau khi destroy xong, kiểm tra trên AWS Console:
-powershell# 1. Không còn EKS cluster
+# Post-Destroy Verification
+
+Run the following commands to verify that all AWS resources have been removed.
+
+## 1. Verify EKS Clusters
+
+```powershell
 aws eks list-clusters --region ap-southeast-1
+```
 
-# 2. Không còn RDS instance
-aws rds describe-db-instances --region ap-southeast-1 --query 'DBInstances[*].DBInstanceIdentifier'
+Expected output:
 
-# 3. Không còn NAT Gateway (tốn tiền nhất nếu bị sót)
-aws ec2 describe-nat-gateways --region ap-southeast-1 --filter Name=state,Values=available --query 'NatGateways[*].NatGatewayId'
+```text
+[]
+```
 
-# 4. Không còn Load Balancer
-aws elbv2 describe-load-balancers --region ap-southeast-1 --query 'LoadBalancers[*].LoadBalancerName'
+---
 
-# 5. Không còn ECR repositories (nếu muốn xóa luôn images)
-aws ecr describe-repositories --region ap-southeast-1 --query 'repositories[*].repositoryName'
-Các resource hay bị sót nhất và tốn tiền là NAT Gateway, ALB, và RDS — kiểm tra kỹ 3 thứ này trước.
+## 2. Verify RDS Instances
+
+```powershell
+aws rds describe-db-instances `
+    --region ap-southeast-1 `
+    --query "DBInstances[*].DBInstanceIdentifier"
+```
+
+---
+
+## 3. Verify NAT Gateways
+
+```powershell
+aws ec2 describe-nat-gateways `
+    --region ap-southeast-1 `
+    --filter Name=state,Values=available `
+    --query "NatGateways[*].NatGatewayId"
+```
+
+---
+
+## 4. Verify Load Balancers
+
+```powershell
+aws elbv2 describe-load-balancers `
+    --region ap-southeast-1 `
+    --query "LoadBalancers[*].LoadBalancerName"
+```
+
+---
+
+## 5. Verify ECR Repositories
+
+```powershell
+aws ecr describe-repositories `
+    --region ap-southeast-1 `
+    --query "repositories[*].repositoryName"
+```
+
+---
+
+# Final Checklist
+
+Verify that the following resources no longer exist:
+
+- [ ] ArgoCD Applications
+- [ ] ArgoCD AppProject
+- [ ] Kubernetes Workloads
+- [ ] Kubernetes Ingresses
+- [ ] Application Load Balancers
+- [ ] EKS Cluster
+- [ ] EKS Node Groups
+- [ ] RDS Instances
+- [ ] NAT Gateways
+- [ ] Security Groups
+- [ ] VPC
+- [ ] ECR Repositories (optional)
+- [ ] CloudWatch Log Groups (if managed by Terraform)
+
+---
+
+# Common Resources Left Behind
+
+These resources are the most common causes of failed destroys or unexpected AWS charges:
+
+| Resource | Impact |
+|----------|--------|
+| NAT Gateway | Continues incurring hourly charges if left behind |
+| Application Load Balancer (ALB) | Retains ENIs that prevent VPC deletion |
+| RDS Instance | Continues incurring storage and compute charges |
+
+> **Always verify that NAT Gateways, ALBs, and RDS instances have been successfully deleted before considering the destroy process complete.**
