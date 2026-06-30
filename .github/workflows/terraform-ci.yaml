@@ -12,23 +12,23 @@ name: Terraform CI
 # =============================================================================
 
 on:
-  # push:
-  #   branches:
-  #     - develop
-  #     - "feature/**"
-  #   paths:
-  #     - "platform/infrastructure/terraform/environments/dev/**"
-  #     - "platform/infrastructure/terraform/modules/**"
-  #     - "platform/infrastructure/terraform/policies/**"
-  #     - ".github/workflows/terraform-ci.yaml"
-  # pull_request:
-  #   branches:
-  #     - develop
-  #   paths:
-  #     - "platform/infrastructure/terraform/environments/dev/**"
-  #     - "platform/infrastructure/terraform/modules/**"
-  #     - "platform/infrastructure/terraform/policies/**"
-  #     - ".github/workflows/terraform-ci.yaml"
+  push:
+    branches:
+      - develop
+      - "feature/**"
+    paths:
+      - "platform/infrastructure/terraform/environments/dev/**"
+      - "platform/infrastructure/terraform/modules/**"
+      - "platform/infrastructure/terraform/policies/**"
+      - ".github/workflows/terraform-ci.yaml"
+  pull_request:
+    branches:
+      - develop
+    paths:
+      - "platform/infrastructure/terraform/environments/dev/**"
+      - "platform/infrastructure/terraform/modules/**"
+      - "platform/infrastructure/terraform/policies/**"
+      - ".github/workflows/terraform-ci.yaml"
   
   workflow_dispatch:
     inputs:
