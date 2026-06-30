@@ -72,6 +72,14 @@ jobs:
   plan:
     name: Terraform Plan
     runs-on: ubuntu-latest
+    # Only run plan for plan/apply flows. Without this, selecting
+    # action=destroy still runs plan (and then opa-gate, since it depends
+    # on plan's output) before the destroy job even starts — wasting time
+    # and potentially failing the whole run on an OPA deny that has nothing
+    # to do with the destroy you actually asked for.
+    if: |
+      (github.event_name == 'push' && github.ref == 'refs/heads/main') ||
+      (github.event_name == 'workflow_dispatch' && github.event.inputs.action != 'destroy')
     environment: dev-plan   # GitHub Environment, add required reviewers if needed
     permissions:
       contents: read
