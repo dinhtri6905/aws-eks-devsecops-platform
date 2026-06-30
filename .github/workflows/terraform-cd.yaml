@@ -100,7 +100,13 @@ jobs:
         uses: hashicorp/setup-terraform@v3
         with:
           terraform_version: ${{ env.TF_VERSION }}
-          terraform_wrapper: true
+          # MUST be false: with the wrapper enabled, `terraform` is replaced
+          # by a wrapper script, and PIPESTATUS[0] from the
+          # `terraform plan -detailed-exitcode | tee ...` pipeline below no
+          # longer reflects Terraform's real exit code. That breaks the
+          # plan_exitcode output, opa-gate/apply never see exitcode == '2',
+          # and they get skipped — which looks like "apply only runs plan".
+          terraform_wrapper: false
 
       - name: Terraform init
         run: |
