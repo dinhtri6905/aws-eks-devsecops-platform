@@ -62,6 +62,7 @@ resource "aws_db_instance" "main" {
   #checkov:skip=CKV_AWS_118:Enhanced Monitoring is disabled to reduce operational cost in this educational environment.
   #checkov:skip=CKV_AWS_157:Single-AZ deployment is sufficient for this educational DevSecOps project.
   #checkov:skip=CKV_AWS_293:Deletion protection is intentionally disabled to support automated Terraform destroy in development.
+  #checkov:skip=CKV_AWS_161:IAM database authentication is not required for this educational project and the application uses standard database credentials.
 
   identifier = var.db_identifier
 
@@ -97,6 +98,12 @@ resource "aws_db_instance" "main" {
 
   # Parameter group
   parameter_group_name = aws_db_parameter_group.main.name
+
+  # Ensure RDS logs are enabled.
+  enabled_cloudwatch_logs_exports = [
+    "postgresql",
+    "upgrade"
+  ]
 
   # Backup
   backup_retention_period  = var.backup_retention_period

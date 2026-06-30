@@ -30,6 +30,8 @@ resource "aws_security_group_rule" "control_plane_ingress_nodes_https" {
 }
 
 resource "aws_security_group_rule" "control_plane_egress_all" {
+  #checkov:skip=CKV_AWS_382:EKS control plane requires unrestricted outbound connectivity to AWS managed services.
+
   security_group_id = aws_security_group.eks_control_plane.id
   type              = "egress"
   description       = "Allow all outbound traffic from EKS Control Plane"
@@ -97,6 +99,8 @@ resource "aws_security_group_rule" "nodes_ingress_alb_nodeport" {
 }
 
 resource "aws_security_group_rule" "nodes_egress_all" {
+  #checkov:skip=CKV_AWS_382:EKS control plane requires unrestricted outbound connectivity to AWS managed services.
+
   security_group_id = aws_security_group.eks_nodes.id
   type              = "egress"
   description       = "Allow all outbound traffic from worker nodes (ECR, S3, AWS APIs)"
@@ -124,6 +128,8 @@ resource "aws_security_group" "alb" {
 }
 
 resource "aws_security_group_rule" "alb_ingress_http" {
+  #checkov:skip=CKV_AWS_260:HTTP port is intentionally exposed to redirect clients to HTTPS.
+
   security_group_id = aws_security_group.alb.id
   type              = "ingress"
   description       = "Allow inbound HTTP traffic from the internet"
@@ -144,6 +150,8 @@ resource "aws_security_group_rule" "alb_ingress_https" {
 }
 
 resource "aws_security_group_rule" "alb_egress_all" {
+  #checkov:skip=CKV_AWS_382:Application Load Balancer requires outbound connectivity to backend targets.
+
   security_group_id = aws_security_group.alb.id
   type              = "egress"
   description       = "Allow all outbound traffic from ALB to worker nodes"
@@ -181,6 +189,8 @@ resource "aws_security_group_rule" "rds_ingress_nodes_postgres" {
 }
 
 resource "aws_security_group_rule" "rds_egress_all" {
+  #checkov:skip=CKV_AWS_382:Default outbound rule is acceptable for this development environment.
+
   security_group_id = aws_security_group.rds.id
   type              = "egress"
   description       = "Allow all outbound traffic from RDS"
