@@ -25,6 +25,7 @@ resource "aws_cloudwatch_log_group" "eks" {
 resource "aws_eks_cluster" "main" {
   #checkov:skip=CKV_AWS_39:Public endpoint is required for local administration and CI/CD.
   #checkov:skip=CKV_AWS_38:Public endpoint CIDR cannot be restricted because the cluster is accessed from dynamic GitHub Actions runners and local development.
+  #checkov:skip=CKV_AWS_58:EKS secrets encryption with a customer-managed KMS key is intentionally omitted to reduce infrastructure complexity and cost in this educational DevSecOps project.
 
   name     = var.cluster_name
   version  = var.kubernetes_version
@@ -43,13 +44,13 @@ resource "aws_eks_cluster" "main" {
     bootstrap_cluster_creator_admin_permissions = true
   }
 
-  encryption_config {
-    resources = ["secrets"]
+  # encryption_config {
+  #   resources = ["secrets"]
 
-    provider {
-      key_arn = aws_kms_key.eks.arn
-    }
-  }
+  #   provider {
+  #     key_arn = aws_kms_key.eks.arn
+  #   }
+  # }
 
   # enable logging to easy debug
   enabled_cluster_log_types = [
