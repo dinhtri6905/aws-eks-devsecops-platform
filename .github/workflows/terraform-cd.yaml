@@ -9,14 +9,22 @@ name: Terraform CD
 #   destroy       -->  destroy --> notify-destroy
 #
 # Trigger:
-#   - Push to main (auto plan + apply)
-#   - workflow_dispatch (manual plan / apply / destroy)
+#   - workflow_dispatch only (manual plan / apply / destroy)
+#   - Push-to-main auto trigger is currently DISABLED (commented out below).
+#     Uncomment the `push:` block to re-enable auto plan + apply on main.
 #
 # Required GitHub Secrets:
 #   AWS_DEV_ROLE_ARN     — IAM Role ARN for OIDC (dev account)
 #   BUCKET_TF_STATE      — S3 bucket name for remote state
 #   GITOPS_REPO_URL
 #   SLACK_WEBHOOK_URL
+#
+# Required GitHub Environments (Settings -> Environments):
+#   dev-plan     — exists; create if missing
+#   dev-apply    — MUST be created manually with required reviewers before
+#                  first use, or the apply job will queue waiting on it
+#   dev-destroy  — MUST be created manually with required reviewers before
+#                  first use, or the destroy job will queue waiting on it
 # =============================================================================
 
 on:
@@ -117,6 +125,7 @@ jobs:
         continue-on-error: true
 
       - name: Export plan to JSON (for OPA)
+        if: steps.plan.outputs.exitcode != '1'
         run: |
           terraform show -json tfplan > ${{ runner.temp }}/tf-plan.json
           # Validate JSON
@@ -124,10 +133,14 @@ jobs:
           echo "Plan JSON exported successfully."
 
       - name: Upload plan artifacts
+        if: steps.plan.outputs.exitcode != '1'
         uses: actions/upload-artifact@v4
         with:
           name: terraform-plan-${{ github.run_id }}
+          # tfplan (binary) is required so the apply job can apply the exact
+          # plan that OPA already reviewed, instead of re-planning blind.
           path: |
+            ${{ env.TF_WORKING_DIR }}/tfplan
             ${{ runner.temp }}/tf-plan.json
             ${{ runner.temp }}/tf-plan.txt
           retention-days: 3
@@ -240,14 +253,17 @@ jobs:
     needs: [plan, opa-gate]
     # Apply only runs when:
     #   - Auto: push to main with real plan changes (exitcode=2)
-    #   - Manual: workflow_dispatch with action=apply
-    # opa-gate is allowed to be 'success' or 'skipped': it is skipped whenever
-    # plan_exitcode is not '2' (no changes), which is a valid no-op apply on
-    # manual dispatch, not a gate failure.
+    #   - Manual: workflow_dispatch with action=apply AND the plan actually
+    #     produced changes (exitcode=2) — apply now reuses the saved tfplan
+    #     artifact, so there must be a plan artifact to download.
+    # opa-gate is allowed to be 'success' here only (not 'skipped'), because
+    # apply can only run when plan_exitcode == '2', which always means
+    # opa-gate ran for real.
     if: |
-      (needs.opa-gate.result == 'success' || needs.opa-gate.result == 'skipped') &&
+      needs.opa-gate.result == 'success' &&
+      needs.plan.outputs.plan_exitcode == '2' &&
       (
-        (github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.plan.outputs.plan_exitcode == '2') ||
+        (github.event_name == 'push' && github.ref == 'refs/heads/main') ||
         (github.event_name == 'workflow_dispatch' && github.event.inputs.action == 'apply')
       )
     environment: dev-apply   # GitHub Environment — add required reviewers here for prod
@@ -288,12 +304,22 @@ jobs:
             -input=false \
             -no-color
 
+      - name: Download plan artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: terraform-plan-${{ github.run_id }}
+          path: ${{ env.TF_WORKING_DIR }}
+
       - name: Terraform apply
+        # Apply the exact plan file produced by the plan job and reviewed by
+        # OPA — never re-plan here, or the apply could diverge from what was
+        # actually gated. No -auto-approve needed: passing a saved plan file
+        # already skips the interactive confirmation.
         run: |
           terraform apply \
-            -auto-approve \
             -input=false \
-            -no-color
+            -no-color \
+            tfplan
         env:
           TF_VAR_gitops_repo_url: ${{ secrets.GITOPS_REPO_URL }}
 
