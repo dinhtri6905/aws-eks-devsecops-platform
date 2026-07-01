@@ -14,4 +14,19 @@ helmCharts:
     version: 3.12.2
     releaseName: metrics-server
     namespace: kube-system
-    valuesFile: values.yaml
+    valuesInline:
+      replicas: 1
+      args:
+        - --kubelet-preferred-address-types=InternalIP
+        - --kubelet-insecure-tls
+        - --metric-resolution=15s
+      resources:
+        requests:
+          cpu: 50m
+          memory: 64Mi
+        limits:
+          cpu: 200m
+          memory: 256Mi
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000

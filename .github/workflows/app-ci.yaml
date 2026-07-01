@@ -112,7 +112,7 @@ jobs:
             path="${OVERLAYS[$name]}"
             if [ -d "$path" ]; then
               echo "--- Building: $name ($path)"
-              if kustomize build "$path" > ${{ runner.temp }}/built-manifests/${name}.yaml 2>&1; then
+              if kustomize build --enable-helm "$path" > ${{ runner.temp }}/built-manifests/${name}.yaml 2>&1; then
                 echo "  [OK] $name"
               else
                 echo "  [FAIL] $name"
