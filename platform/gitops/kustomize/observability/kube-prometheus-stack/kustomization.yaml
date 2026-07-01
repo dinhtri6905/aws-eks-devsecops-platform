@@ -22,7 +22,33 @@ helmCharts:
     version: 58.7.2
     releaseName: kube-prometheus-stack
     namespace: monitoring
-    valuesFile: values.yaml
+    valuesInline:
+      prometheus:
+        prometheusSpec:
+          retention: 7d
+          retentionSize: "8GB"
+          storageSpec:
+            volumeClaimTemplate:
+              spec:
+                storageClassName: gp2
+                accessModes: ["ReadWriteOnce"]
+                resources:
+                  requests:
+                    storage: 10Gi
+      grafana:
+        enabled: true
+        replicas: 1
+      alertmanager:
+        enabled: true
+        alertmanagerSpec:
+          storage:
+            volumeClaimTemplate:
+              spec:
+                storageClassName: gp2
+                accessModes: ["ReadWriteOnce"]
+                resources:
+                  requests:
+                    storage: 10Gi
 
 resources:
   # Grafana dashboards — auto-loaded via sidecar (label: grafana_dashboard=1)
