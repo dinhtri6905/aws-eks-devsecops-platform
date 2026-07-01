@@ -91,9 +91,9 @@ jobs:
           echo "=== Building dev overlays ==="
           FAILED=0
           declare -A OVERLAYS=(
-            [platform-services]="platform/gitops/kustomize/overlays/dev/platform-services"
-            [security]="platform/gitops/kustomize/overlays/dev/security"
-            [observability]="platform/gitops/kustomize/overlays/dev/observability"
+            [platform-services]="platform/gitops/kustomize/platform-services"
+            [security]="platform/gitops/kustomize/security"
+            [observability]="platform/gitops/kustomize/observability"
             [online-boutique]="platform/gitops/kustomize/overlays/dev/applications/online-boutique"
           )
 
@@ -261,7 +261,7 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Run Trivy filesystem scan (SARIF)
-        uses: aquasecurity/trivy-action@0.28.0
+        uses: aquasecurity/trivy-action@master
         with:
           scan-type: "fs"
           scan-ref: "."
@@ -272,7 +272,7 @@ jobs:
           exit-code: "0"  # non-blocking — report only
 
       - name: Run Trivy filesystem scan (table for logs)
-        uses: aquasecurity/trivy-action@0.28.0
+        uses: aquasecurity/trivy-action@master
         with:
           scan-type: "fs"
           scan-ref: "."
