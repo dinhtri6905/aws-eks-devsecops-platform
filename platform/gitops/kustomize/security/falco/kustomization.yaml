@@ -21,7 +21,6 @@ helmCharts:
     version: 9.1.0
     releaseName: falco
     namespace: falco
-    valuesFile: values.yaml
 
 resources:
   - custom-rules/custom-rules.yaml

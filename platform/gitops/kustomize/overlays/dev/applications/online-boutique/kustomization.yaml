@@ -1,0 +1,36 @@
+# ============================================================
+# Dev overlay for online-boutique application
+# Orchestrates dev-specific configurations for all 13 microservices
+# Updated by app-cd workflow via: kustomize edit set image
+# ============================================================
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: online-boutique
+
+# Point to the base application (all 13 services)
+bases:
+  - ../../../applications/online-boutique
+
+# Dev-specific label on every resource
+commonLabels:
+  environment: dev
+
+# Dev resource constraints: 1 replica per service for cost savings
+patches:
+  - path: replicas-patch.yaml
+    target:
+      kind: Deployment
+      name: ".*"
+  - path: configmap-patch.yaml
+    target:
+      kind: ConfigMap
+      name: online-boutique-env
+
+# Generate/override ConfigMap for dev environment
+configMapGenerator:
+  - name: online-boutique-env
+    behavior: create
+    literals:
+      - ENVIRONMENT=dev
+      - LOG_LEVEL=info

@@ -1,0 +1,7 @@
+# Placeholder — add dev-specific config overrides here if needed
+# Example: override a key in the generated ConfigMap
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: online-boutique-env
+data: {}
