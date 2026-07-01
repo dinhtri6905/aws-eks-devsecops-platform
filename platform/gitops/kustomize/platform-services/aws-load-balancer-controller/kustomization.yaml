@@ -19,4 +19,4 @@ helmCharts:
     version: 1.8.1
     releaseName: aws-load-balancer-controller
     namespace: kube-system
-    valuesFile: values.yaml
+    valuesFile: values.rendered.yaml

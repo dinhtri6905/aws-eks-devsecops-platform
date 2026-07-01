@@ -292,7 +292,7 @@ jobs:
       )
     environment: dev-apply   # GitHub Environment — add required reviewers here for prod
     permissions:
-      contents: read
+      contents: write
       id-token: write
 
     defaults:
@@ -353,6 +353,31 @@ jobs:
           terraform output -json > ${{ runner.temp }}/tf-outputs.json
           echo "=== Terraform Outputs ==="
           cat ${{ runner.temp }}/tf-outputs.json | jq 'to_entries[] | "\(.key): \(.value.value)"' -r
+
+      - name: Render GitOps values from Terraform outputs
+        if: success()
+        shell: bash
+        run: |
+          pwsh -NoProfile -ExecutionPolicy Bypass -File "$GITHUB_WORKSPACE/platform/gitops/scripts/Render-LbcValues.ps1" \
+            -TerraformDir "$GITHUB_WORKSPACE/platform/infrastructure/terraform/environments/dev" \
+            -TemplatePath "$GITHUB_WORKSPACE/platform/gitops/kustomize/platform-services/aws-load-balancer-controller/values.yaml" \
+            -OutputPath "$GITHUB_WORKSPACE/platform/gitops/kustomize/platform-services/aws-load-balancer-controller/values.rendered.yaml"
+
+      - name: Commit rendered GitOps values back to Git
+        if: success()
+        working-directory: ${{ github.workspace }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add platform/gitops/kustomize/platform-services/aws-load-balancer-controller/values.rendered.yaml
+
+          if git diff --cached --quiet; then
+            echo "No rendered GitOps values changed."
+            exit 0
+          fi
+
+          git commit -m "[skip ci] Update rendered AWS LBC values from Terraform"
+          git push origin HEAD:${GITHUB_REF_NAME}
 
 # =============================================================================
 # JOB 4: Notify — Apply Result (separate job per execution flow)
