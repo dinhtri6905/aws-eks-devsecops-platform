@@ -94,7 +94,7 @@ jobs:
             [platform-services]="platform/gitops/kustomize/platform-services"
             [security]="platform/gitops/kustomize/security"
             [observability]="platform/gitops/kustomize/observability"
-            [online-boutique]="platform/gitops/kustomize/overlays/dev/applications/online-boutique"
+            [online-boutique]="platform/gitops/kustomize/applications/online-boutique"
           )
 
           mkdir -p ${{ runner.temp }}/built-manifests

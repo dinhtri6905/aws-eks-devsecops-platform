@@ -1,0 +1,16 @@
+# ============================================================
+# observability
+# Aggregates the Observability layer (monitoring & logging):
+#   - kube-prometheus-stack: Prometheus, Grafana, alertmanager
+#   - crds:                  Prometheus/Alertmanager CRDs
+#
+# Referenced directly by
+# platform/gitops/argocd/applications/observability.yaml via
+# `source.path: platform/gitops/kustomize/observability`.
+# ============================================================
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+resources:
+  - crds/
+  - kube-prometheus-stack/
