@@ -53,6 +53,15 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           # GITLEAKS_LICENSE: ${{ secrets.GITLEAKS_LICENSE }}  # Required for org repos only
 
+      - name: Gitleaks Summary
+        if: always()
+        run: |
+          if [ "${{ job.status }}" = "success" ]; then
+            echo "No leaks detected"
+          else
+            echo "Leaks detected - see report"
+          fi
+
       - name: Upload Gitleaks report
         if: failure()
         uses: actions/upload-artifact@v4
@@ -103,10 +112,14 @@ jobs:
             path="${OVERLAYS[$name]}"
             if [ -d "$path" ]; then
               echo "--- Building: $name ($path)"
-              kustomize build "$path" \
-                > ${{ runner.temp }}/built-manifests/${name}.yaml 2>&1 && \
-                echo "  [OK] $name" || \
-                { echo "  [FAIL] $name"; FAILED=1; }
+              if kustomize build "$path" > ${{ runner.temp }}/built-manifests/${name}.yaml 2>&1; then
+                echo "  [OK] $name"
+              else
+                echo "  [FAIL] $name"
+                echo "  Error output:"
+                cat ${{ runner.temp }}/built-manifests/${name}.yaml | head -50
+                FAILED=1
+              fi
             else
               echo "  [SKIP] $name: path not found ($path)"
             fi

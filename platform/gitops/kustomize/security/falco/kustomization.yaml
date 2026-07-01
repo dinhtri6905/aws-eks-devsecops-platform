@@ -21,6 +21,12 @@ helmCharts:
     version: 9.1.0
     releaseName: falco
     namespace: falco
+    valuesInline:
+      ebpf:
+        enabled: true
+      serviceAccount:
+        create: true
+        name: falco
 
 resources:
   - custom-rules/custom-rules.yaml
