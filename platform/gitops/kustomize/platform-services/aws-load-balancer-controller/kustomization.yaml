@@ -19,3 +19,10 @@ helmCharts:
     version: 1.8.1
     releaseName: aws-load-balancer-controller
     namespace: kube-system
+    valuesInline:
+      clusterName: eks-devsecops-dev-cluster
+      region: ap-southeast-1
+      vpcId: vpc-0000000000000000
+      serviceAccount:
+        annotations:
+          eks.amazonaws.com/role-arn: arn:aws:iam::041659741748:role/eks-devsecops-dev-aws-lbc-role
