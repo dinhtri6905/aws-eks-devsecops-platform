@@ -150,7 +150,7 @@ aws-eks-devsecops-platform/
 ├── .github/workflows/              # CI/CD: terraform-ci, terraform-cd, app-ci, app-cd, check-scan
 ├── microservices-application/      # Online Boutique source code (11 services + protos)
 ├── platform/
-│   ├── infrastructure/terraform/   # IaC: bootstrap, environments, modules, OPA policies
+│   ├── infrastructure/terraform/   # IaC: oidc-bootstrap, bootstrap, environments, modules, OPA policies
 │   ├── gitops/                     # ArgoCD root-app.yaml + App of Apps + Kustomize manifests
 └── docs/                           # Architecture notes and diagram sources
 ```
@@ -230,9 +230,13 @@ A PostgreSQL instance runs with a custom parameter group enabling connection, di
 
 IRSA grants AWS permissions at the pod level rather than the node level — a compromised pod cannot inherit the full node role. This is why the AWS Load Balancer Controller and EBS CSI Driver use IRSA instead of broader node IAM policies.
 
+> **Operational note — AWS LBC via Kustomize `helmCharts`:** Kustomize's built-in Helm inflator renders a chart's templates but does **not** install CRDs bundled under the chart's `crds/` folder the way `helm install` does. The AWS Load Balancer Controller chart ships a `TargetGroupBinding`/`IngressClassParams` CRD bundle, so it must be listed explicitly as a `resources:` entry in `kustomization.yaml` — otherwise the controller pod crash-loops with `no matches for kind "TargetGroupBinding" in version "elbv2.k8s.aws/v1beta1"`. Likewise, `clusterName`/`region`/`vpcId` for the controller are supplied via `valuesFile: values.rendered.yaml` (regenerated from live Terraform outputs by `scripts/Render-LbcValues.ps1`) rather than a hardcoded `valuesInline` block, so a stale or placeholder VPC ID can't silently point the controller at a non-existent VPC.
+
 ### Terraform State Management
 
 A one-time `bootstrap` module (run with local state) creates the remote backend: an S3 bucket with versioning, KMS encryption (auto-rotating key), blocked public access, and a 90-day non-current version expiry; and a DynamoDB lock table with `PAY_PER_REQUEST` billing and point-in-time recovery enabled. All subsequent environments use this backend for state locking and encryption.
+
+A separate one-time `oidc-bootstrap` module, also run with local state, creates the GitHub OIDC Identity Provider and the IAM role GitHub Actions assumes for `terraform-cd`/`app-cd`. Both bootstrap modules run before any remote backend or CI/CD role exists, so local state is the only option — see [Section 11](#11-deployment-guide) for the exact order of operations.
 
 ### High Availability Considerations
 
@@ -500,6 +504,35 @@ All inter-service communication uses gRPC over the cluster's internal DNS. The f
 
 Ensure AWS credentials are configured and the GitHub repository secrets from [Section 7](#7-required-secrets--environments) are set before starting.
 
+### Bootstrap GitHub OIDC for CI/CD
+
+Run once, using local AWS credentials with IAM admin permissions, **before** setting up the `AWS_DEV_ROLE_ARN` GitHub secret or running any GitHub Actions workflow. This module creates the GitHub OIDC Identity Provider and the IAM role (`github-actions-terraform-dev`) that GitHub Actions assumes via `sts:AssumeRoleWithWebIdentity` — no static AWS access keys are stored in GitHub.
+
+```bash
+cd platform/infrastructure/terraform/oidc-bootstrap
+
+cat > terraform.tfvars <<EOF
+aws_region  = "ap-southeast-1"
+github_org  = "<your-github-org-or-username>"
+github_repo = "<your-repo-name>"
+EOF
+
+terraform init
+terraform plan
+terraform apply
+```
+
+> **Local state only, by design.** Like `bootstrap/`, this module intentionally uses local state — the S3 backend and the role it authenticates don't exist yet at this point, so there's nothing remote to store state in. Do **not** delete the generated `terraform.tfstate`/`terraform.tfstate.backup`; keep them (e.g. encrypted in a password manager or a separate private bucket) so the OIDC provider and role can be updated or destroyed cleanly later instead of being re-imported by hand.
+
+Retrieve the role ARN and use it as the `AWS_DEV_ROLE_ARN` GitHub repository secret:
+
+```bash
+aws iam get-role --role-name github-actions-terraform-dev \
+  --query 'Role.Arn' --output text
+```
+
+> **Dev vs. prod scope.** The role's trust policy condition (`token.actions.githubusercontent.com:sub`) currently allows `repo:<org>/<repo>:*` — any branch, any workflow, any environment in the repo. This is intentionally broad for the dev environment. The role is also attached to `AdministratorAccess` for the same reason — dev needs to freely provision any resource type while the platform is under active development. Before reusing this module for production, tighten the `sub` condition to a specific environment (e.g. `repo:<org>/<repo>:environment:prod-apply`) and replace `AdministratorAccess` with a least-privilege policy scoped to the services Terraform actually manages (VPC, EKS, ECR, RDS, IAM, S3, DynamoDB, KMS).
+
 ### Bootstrap Terraform Backend
 
 Run once to create the S3 bucket, DynamoDB lock table, and KMS key:
@@ -532,8 +565,6 @@ This provisions the VPC, EKS cluster, ECR repositories, RDS instance, and instal
 ```bash
 aws eks update-kubeconfig --region ap-southeast-1 --name eks-devsecops-dev-cluster
 kubectl get nodes  # expect 2 nodes in Ready state
-
-D:\PERSONAL_PROJECT\PROJECT_3\aws-eks-devsecops-platform\platform\gitops\kustomize\platform-services\aws-load-balancer-controller\values.yaml
 ```
 
 ### Verify EKS Cluster
@@ -547,17 +578,27 @@ kubectl get pods -n argocd  # expect ArgoCD pods Running
 
 ```bash
 kubectl port-forward svc/argocd-server -n argocd 8080:443
+```
 
+Decode the initial admin password (PowerShell):
+
+```powershell
 [System.Text.Encoding]::UTF8.GetString(
     [System.Convert]::FromBase64String(
         (kubectl get secret argocd-initial-admin-secret -n argocd -o jsonpath="{.data.password}")
     )
 )
 
-or 
-
+# or, in two steps:
 $pwd = kubectl get secret argocd-initial-admin-secret -n argocd -o jsonpath="{.data.password}"
 [System.Text.Encoding]::UTF8.GetString([System.Convert]::FromBase64String($pwd))
+```
+
+On macOS/Linux, use instead:
+
+```bash
+kubectl get secret argocd-initial-admin-secret -n argocd \
+  -o jsonpath="{.data.password}" | base64 -d
 ```
 
 Open `https://localhost:8080`.
