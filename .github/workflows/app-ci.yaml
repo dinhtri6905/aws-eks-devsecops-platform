@@ -17,8 +17,8 @@ on:
   #     - "feature/**"
   #   paths:
   #     - "platform/gitops/**"
-  #     - "platform/security/opa/**"
-  #     - "platform/security/falco/**"
+  #     - "platform/kustomize/security/opa/**"
+  #     - "platform/kustomize/security/falco/**"
   #     - "microservices-application/**"
   #     - ".github/workflows/app-ci.yaml"
   # pull_request:
@@ -26,8 +26,8 @@ on:
   #     - develop
   #   paths:
   #     - "platform/gitops/**"
-  #     - "platform/security/opa/**"
-  #     - "platform/security/falco/**"
+  #     - "platform/kustomize/security/opa/**"
+  #     - "platform/kustomize/security/falco/**"
   #     - "microservices-application/**"
   #     - ".github/workflows/app-ci.yaml"
   

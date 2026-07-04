@@ -1,17 +1,18 @@
 # ============================================================
 # aws-load-balancer-controller
-# Watches Ingress/Service resources and provisions AWS ALBs/
-# NLBs. Requires the IRSA role created by the Terraform `eks`
-# module (alb_controller_role_arn).
+# Watches Ingress/Service resources and provisions AWS ALBs/NLBs.
+# Requires the IRSA role created by the Terraform `eks` module
+# (alb_controller_role_arn).
+#
+# IngressClass "alb" is created by the Helm chart itself, not by
+# a hand-written resource — avoids a duplicate-resource conflict
+# between a manual ingressclass.yaml and the chart's own output.
 # ============================================================
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 
 namespace: kube-system
 
-resources:
-  - ingressclass.yaml
-  
 helmCharts:
   - name: aws-load-balancer-controller
     repo: https://aws.github.io/eks-charts
@@ -22,7 +23,18 @@ helmCharts:
       clusterName: eks-devsecops-dev-cluster
       region: ap-southeast-1
       vpcId: vpc-0000000000000000
-      createIngressClassResource: false
+
+      # Let the chart create the IngressClass (name defaults to "alb").
+      createIngressClassResource: true
+
+      # No IngressClassParams needed.
+      ingressClassParams:
+        create: false
+
+      # Make "alb" the cluster's default IngressClass.
+      ingressClassConfig:
+        default: true
+
       serviceAccount:
         annotations:
           eks.amazonaws.com/role-arn: arn:aws:iam::041659741748:role/eks-devsecops-dev-aws-lbc-role
