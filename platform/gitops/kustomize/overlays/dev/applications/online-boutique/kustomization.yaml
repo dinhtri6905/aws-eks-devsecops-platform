@@ -10,7 +10,7 @@ namespace: online-boutique
 
 # Point to the base application (all 13 services)
 bases:
-  - ../../../applications/online-boutique
+  - ../../../../applications/online-boutique
 
 # Dev-specific label on every resource
 commonLabels:
