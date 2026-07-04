@@ -43,7 +43,11 @@ podDisruptionBudget:
   enabled: false
   minAvailable: 1
 
-createIngressClassResource: false
+createIngressClassResource: true
+ingressClassParams:
+  create: false
+ingressClassConfig:
+  default: true
 
 serviceMonitor:
   enabled: false
