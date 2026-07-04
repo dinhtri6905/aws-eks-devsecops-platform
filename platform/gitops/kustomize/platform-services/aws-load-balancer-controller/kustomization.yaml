@@ -22,6 +22,7 @@ helmCharts:
       clusterName: eks-devsecops-dev-cluster
       region: ap-southeast-1
       vpcId: vpc-0000000000000000
+      createIngressClassResource: false
       serviceAccount:
         annotations:
           eks.amazonaws.com/role-arn: arn:aws:iam::041659741748:role/eks-devsecops-dev-aws-lbc-role

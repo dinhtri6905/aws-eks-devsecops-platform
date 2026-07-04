@@ -6,6 +6,7 @@ name: Terraform CD
 #
 # Execution Flow:
 #   plan | apply  -->  plan --> opa-gate --> apply --> notify-apply
+#                                  \-- (if denied) --> notify-opa-deny
 #   destroy       -->  destroy --> notify-destroy
 #
 # Trigger:
@@ -152,7 +153,11 @@ jobs:
           echo "Plan JSON exported successfully."
 
       - name: Stage artifacts in one flat directory
-
+        # Only run when the plan actually produced tf-plan.json (exitcode != 1).
+        # Without this guard, a failed plan (exitcode=1) leaves tf-plan.json
+        # missing and this step dies on a cryptic "cp: cannot stat" error
+        # instead of the clear message in "Fail if plan errored" below.
+        if: steps.plan.outputs.exitcode != '1'
         run: |
           mkdir -p ${{ runner.temp }}/plan-artifacts
           cp tfplan ${{ runner.temp }}/plan-artifacts/tfplan
@@ -185,6 +190,9 @@ jobs:
     # Only runs when the plan actually has changes (exitcode=2). exitcode=0
     # means there is nothing to apply, so the policy check would be wasted.
     if: needs.plan.outputs.plan_exitcode == '2'
+    permissions:
+      contents: read   # checkout policies/
+      actions: read    # download-artifact (needed if org sets a restrictive default GITHUB_TOKEN)
 
     steps:
       - name: Checkout code (needed for policies/)
@@ -267,6 +275,33 @@ jobs:
             exit 1
           fi
           echo "[OK] OPA gate passed: no deny violations."
+
+# =============================================================================
+# JOB 2b: Notify — OPA Gate Deny (fires only when OPA actually blocks)
+# =============================================================================
+# Without this job, an OPA deny makes `apply` skip (not fail), and
+# notify-apply's `needs.apply.result != 'skipped'` check never fires —
+# so nobody gets told the pipeline was blocked by policy unless they
+# check the Actions log manually.
+  notify-opa-deny:
+    name: Notify — OPA Gate Blocked
+    runs-on: ubuntu-latest
+    needs: opa-gate
+    if: always() && needs.opa-gate.result == 'failure'
+
+    steps:
+      - name: Notify Slack — OPA Gate Blocked
+        uses: rtCamp/action-slack-notify@v2
+        env:
+          SLACK_WEBHOOK: ${{ secrets.SLACK_WEBHOOK_URL }}
+          SLACK_COLOR: "danger"
+          SLACK_TITLE: "Terraform CD — DEV [BLOCKED by OPA]"
+          SLACK_MESSAGE: |
+            Actor  : ${{ github.actor }}
+            Commit : ${{ github.sha }}
+            Status : OPA policy gate denied this plan — apply was NOT run.
+            Run    : ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          SLACK_FOOTER: "EKS DevSecOps Platform | Terraform CD"
 
 # =============================================================================
 # JOB 3: Terraform Apply
