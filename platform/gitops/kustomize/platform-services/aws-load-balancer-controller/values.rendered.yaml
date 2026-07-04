@@ -52,10 +52,11 @@ podDisruptionBudget:
   enabled: false
   minAvailable: 1
 
-# IngressClass is created separately via ingressclass.yaml so
-# it can be referenced explicitly by Online Boutique's Ingress
-# (`spec.ingressClassName: alb`).
-createIngressClassResource: false
+createIngressClassResource: true
+ingressClassParams:
+  create: false
+ingressClassConfig:
+  default: true
 
 serviceMonitor:
   enabled: false
