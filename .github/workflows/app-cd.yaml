@@ -190,7 +190,12 @@ jobs:
       - name: Trivy image scan (JSON)
         id: trivy_json
         if: steps.build.outputs.skipped != 'true'
-        uses: aquasecurity/trivy-action@0.28.0
+        # Pinned to an immutable commit SHA (v0.36.0), not a mutable tag.
+        # aquasecurity/trivy-action tags were compromised in a March 2026
+        # supply-chain attack (75/76 version tags force-pushed to malicious
+        # commits). Tags without a leading "v" (e.g. 0.28.0) were retired
+        # and no longer resolve. Do not revert to a bare version tag.
+        uses: aquasecurity/trivy-action@ed142fdcb1de6fa9f3ba1550f1d92abfa9c81e51 # v0.36.0
         with:
           image-ref: ${{ steps.meta.outputs.full_image }}
           format: "json"
