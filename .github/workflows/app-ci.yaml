@@ -274,7 +274,11 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Run Trivy filesystem scan (SARIF)
-        uses: aquasecurity/trivy-action@master
+        # Pinned to an immutable commit SHA (v0.36.0), never @master.
+        # @master was never confirmed safe during the March 2026
+        # trivy-action supply-chain compromise — floating refs (branches
+        # or mutable tags) are exactly what let that attack propagate.
+        uses: aquasecurity/trivy-action@ed142fdcb1de6fa9f3ba1550f1d92abfa9c81e51 # v0.36.0
         with:
           scan-type: "fs"
           scan-ref: "."
@@ -285,7 +289,7 @@ jobs:
           exit-code: "0"  # non-blocking — report only
 
       - name: Run Trivy filesystem scan (table for logs)
-        uses: aquasecurity/trivy-action@master
+        uses: aquasecurity/trivy-action@ed142fdcb1de6fa9f3ba1550f1d92abfa9c81e51 # v0.36.0
         with:
           scan-type: "fs"
           scan-ref: "."
