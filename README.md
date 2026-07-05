@@ -82,7 +82,7 @@ The platform has five cooperating layers.
 
 - **Infrastructure Layer** — Terraform provisions all AWS resources: a VPC with public/private subnets across two AZs, an EKS cluster with a managed node group, one ECR repository per microservice, an RDS PostgreSQL instance, and the IAM roles the cluster and its controllers need. A dedicated `argocd-bootstrap` module installs ArgoCD via Helm; Terraform's involvement ends there — it does not manage the Root Application.
 
-- **GitOps Layer** — ArgoCD continuously reconciles cluster state against Git. A Root Application and its AppProject are a static manifest at `platform/gitops/argocd/root-app.yaml`, applied once with `kubectl apply` when bootstrapping a new cluster. From then on ArgoCD reconciles it like any other Application — including itself. It watches `platform/gitops/argocd/applications/` and manages four child Applications, each in its own sync wave.
+- **GitOps Layer** — ArgoCD continuously reconciles cluster state against Git. A Root Application and its AppProject are a static manifest at `platform/gitops/argocd/root-app.yaml`, applied once with `kubectl apply` when bootstrapping a new cluster. From then on ArgoCD reconciles it like any other Application — including itself. It watches `platform/gitops/argocd/applications/` and manages ten child Applications across eight sync waves (0–7).
 
 - **Security Layer** — controls at four points: OPA Rego evaluates Terraform plans before apply, Trivy scans images before they reach the registry, OPA Gatekeeper validates every Pod at admission, and Falco inspects syscalls at runtime on every node.
 
@@ -114,16 +114,26 @@ Components deploy in strict wave order so admission webhooks and dependencies ar
 
 ```mermaid
 flowchart TD
+    W0["Wave 0 — argocd-config
+    ArgoCD's own configuration (RBAC, projects, notifications)"]
     W1["Wave 1 — platform-services
     Metrics Server, AWS Load Balancer Controller, Argo Rollouts"]
-    W2["Wave 2 — security
-    OPA Gatekeeper (7 policies), Falco"]
-    W3["Wave 3 — observability
+    W2["Wave 2 — gatekeeper-install
+    OPA Gatekeeper controller + CRDs"]
+    W3["Wave 3 — observability-crds
+    Prometheus Operator CRDs"]
+    W4["Wave 4 — gatekeeper-templates, falco
+    Gatekeeper ConstraintTemplates · Falco DaemonSet"]
+    W5["Wave 5 — gatekeeper-policies, network-policies
+    Gatekeeper Constraints (7 policies) · NetworkPolicies"]
+    W6["Wave 6 — observability
     Prometheus, Grafana, Alertmanager"]
-    W4["Wave 4 — online-boutique
+    W7["Wave 7 — online-boutique
     11 microservices as Rollout resources (Blue/Green)"]
-    W1 --> W2 --> W3 --> W4
+    W0 --> W1 --> W2 --> W3 --> W4 --> W5 --> W6 --> W7
 ```
+
+Ten Applications share these eight waves: `gatekeeper-templates`/`falco` both sync at wave 4, and `gatekeeper-policies`/`network-policies` both sync at wave 5, since neither pair depends on the other — only on the wave before it.
 
 ### Terraform / GitOps Ownership Boundary
 
@@ -282,7 +292,7 @@ Triggered on push to `main` or manual dispatch. Runs `terraform plan`, exports i
 
 ### ArgoCD Synchronization Flow
 
-The Root Application — a static manifest at `platform/gitops/argocd/root-app.yaml`, applied once after Terraform installs ArgoCD — watches `platform/gitops/argocd/applications/` and manages four child Applications. ArgoCD polls Git roughly every three minutes, detects divergence, and reconciles via Kustomize build + server-side apply. `selfHeal: true` means any out-of-band manual change is automatically reverted, including on the Root Application itself.
+The Root Application — a static manifest at `platform/gitops/argocd/root-app.yaml`, applied once after Terraform installs ArgoCD — watches `platform/gitops/argocd/applications/` and manages ten child Applications across eight sync waves (0–7): `argocd-config` (0), `platform-services` (1), `gatekeeper-install` (2), `observability-crds` (3), `gatekeeper-templates` and `falco` (4), `gatekeeper-policies` and `network-policies` (5), `observability` (6), and `online-boutique` (7). ArgoCD polls Git roughly every three minutes, detects divergence, and reconciles via Kustomize build + server-side apply. `selfHeal: true` means any out-of-band manual change is automatically reverted, including on the Root Application itself.
 
 ### Deployment Strategy
 
@@ -615,11 +625,11 @@ kubectl apply -f platform/gitops/argocd/root-app.yaml
 kubectl get applications -n argocd
 ```
 
-The Root Application should reach `Synced / Healthy`, and the four child Applications (`platform-services`, `security`, `observability`, `online-boutique`) should follow within 5–10 minutes.
+The Root Application should reach `Synced / Healthy`, and the ten child Applications — `argocd-config`, `platform-services`, `gatekeeper-install`, `observability-crds`, `gatekeeper-templates`, `falco`, `gatekeeper-policies`, `network-policies`, `observability`, `online-boutique` — should follow in sync-wave order (0–7) within 5–10 minutes.
 
 ### Deploy Application
 
-ArgoCD deploys Online Boutique automatically at wave 4 — no manual step required.
+ArgoCD deploys Online Boutique automatically at wave 7 — no manual step required.
 
 ```bash
 kubectl get pods -n online-boutique
