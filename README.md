@@ -1,10 +1,10 @@
 # Cloud-Native Secure GitOps Platform on AWS EKS
 
-A cloud-native DevSecOps platform built on AWS EKS to demonstrate secure, automated, and scalable application delivery through GitOps principles.
+A cloud-native DevSecOps platform on AWS EKS, demonstrating secure, automated, scalable delivery through GitOps.
 
-The project uses Online Boutique, a microservices-based e-commerce application, as the demonstration workload. Rather than focusing solely on application deployment, the project aims to establish a complete platform that integrates infrastructure automation, continuous delivery, policy enforcement, runtime security, and observability within a unified operational workflow.
+It uses Online Boutique, a microservices e-commerce demo, as its workload — but the goal is the platform itself: infrastructure automation, continuous delivery, policy enforcement, runtime security, and observability, unified in one operational workflow.
 
-By combining Infrastructure as Code, GitOps practices, automated security controls, and centralized monitoring, the platform enables infrastructure, applications, and operational policies to be managed consistently through Git, providing reliable deployments, stronger security governance, and improved operational efficiency.
+Infrastructure as Code, GitOps, automated security controls, and centralized monitoring together let infrastructure, applications, and policy all be managed through Git — for reliable deployments, stronger security governance, and less manual toil.
 
 ---
 
@@ -31,18 +31,18 @@ By combining Infrastructure as Code, GitOps practices, automated security contro
 
 ### Project Overview
 
-This project is a self-contained DevSecOps platform that provisions AWS infrastructure with Terraform, bootstraps an Amazon EKS cluster, and delivers a Kubernetes workload entirely through GitOps with ArgoCD. Security controls are enforced at every stage — infrastructure plan time, image build time, admission time, and runtime — rather than bolted on afterward.
+A self-contained DevSecOps platform: Terraform provisions AWS infrastructure, bootstraps an EKS cluster, and hands off delivery entirely to GitOps via ArgoCD. Security is enforced at every stage — plan time, image build, admission, and runtime — not bolted on afterward.
 
 ### Problem Statement
 
-Microservices teams typically face three compounding challenges: **security drift**, where configurations diverge from policy and vulnerabilities accumulate undetected; **manual toil**, where infrastructure changes and deployments depend on error-prone human coordination; and **observability gaps**, where incidents surface to end users before they surface to engineers.
+Microservices teams commonly face three compounding problems: **security drift** (config diverges from policy, vulnerabilities go unnoticed), **manual toil** (infra changes and deploys depend on error-prone human coordination), and **observability gaps** (incidents reach users before they reach engineers).
 
 ### Objectives
 
 - Provision AWS infrastructure (networking, compute, registry, database) entirely as code
-- Deliver a Kubernetes workload through GitOps rather than manual `kubectl apply`
+- Deliver Kubernetes workloads through GitOps, not manual `kubectl apply`
 - Enforce security policy at the IaC, image, admission, and runtime layers
-- Provide unified metrics, dashboards, and alerting for the platform and the application
+- Provide unified metrics, dashboards, and alerting for platform and application
 
 ### Scope
 
@@ -59,12 +59,12 @@ Microservices teams typically face three compounding challenges: **security drif
 
 ### Key Capabilities
 
-- Modular Terraform with a remote state backend protected by S3 versioning, DynamoDB locking, and KMS encryption
-- ArgoCD App of Apps pattern with sync-wave ordering across platform, security, observability, and application layers
+- Modular Terraform with a remote state backend: S3 versioning, DynamoDB locking, KMS encryption
+- ArgoCD App of Apps with sync-wave ordering across platform, security, observability, application layers
 - Blue/Green deployments via Argo Rollouts for zero-impact cutover and instant rollback
-- OPA Rego policy gates on Terraform plans, OPA Gatekeeper admission control on the cluster, and Falco runtime detection on every node
-- Five GitHub Actions workflows using OIDC-based AWS authentication — no long-lived access keys
-- Clear ownership boundary between Terraform and GitOps: Terraform provisions infrastructure and installs ArgoCD; ArgoCD owns everything that runs on top of it, including its own Root Application
+- OPA Rego gates on Terraform plans, OPA Gatekeeper at admission, Falco at runtime — on every node
+- Five GitHub Actions workflows, OIDC-based AWS auth — no long-lived access keys
+- Clear split between Terraform and GitOps: Terraform provisions infrastructure and installs ArgoCD; ArgoCD owns everything running on top, including its own Root Application
 
 ---
 
@@ -72,23 +72,23 @@ Microservices teams typically face three compounding challenges: **security drif
 
 > **[Architecture Diagram Placeholder]**
 
-The platform begins with Terraform provisioning a VPC, an EKS cluster, ECR repositories, and an RDS instance on AWS, then installing ArgoCD on the cluster. From there, ArgoCD's Root Application — a static manifest applied once via `kubectl` — takes over and pulls platform services, security tooling, the observability stack, and the Online Boutique application from Git, applying them in a strict sync-wave order. GitHub Actions pipelines handle both infrastructure changes (plan → OPA policy gate → apply) and application changes (build → scan → push to ECR → update GitOps manifests), with security scanning embedded at every stage rather than performed once at the end.
+Terraform provisions a VPC, EKS cluster, ECR repositories, and RDS on AWS, then installs ArgoCD. From there, ArgoCD's Root Application — a static manifest applied once via `kubectl` — takes over, pulling platform services, security tooling, the observability stack, and Online Boutique from Git in strict sync-wave order. GitHub Actions handles both infrastructure changes (plan → OPA gate → apply) and application changes (build → scan → push to ECR → update GitOps manifests), with security scanning embedded at every stage.
 
 ---
 
 ## 3. Solution Architecture
 
-The platform is organized into five cooperating layers.
+The platform has five cooperating layers.
 
-- **Infrastructure Layer** — Terraform provisions all AWS resources: a VPC with public/private subnets across two availability zones, an EKS cluster with a managed node group, ECR repositories for each microservice, an RDS PostgreSQL instance, and the IAM roles required by the cluster and its controllers. A dedicated `argocd-bootstrap` module installs ArgoCD via Helm. Terraform's involvement ends there — it does not create or manage the Root Application.
+- **Infrastructure Layer** — Terraform provisions all AWS resources: a VPC with public/private subnets across two AZs, an EKS cluster with a managed node group, one ECR repository per microservice, an RDS PostgreSQL instance, and the IAM roles the cluster and its controllers need. A dedicated `argocd-bootstrap` module installs ArgoCD via Helm; Terraform's involvement ends there — it does not manage the Root Application.
 
-- **GitOps Layer** — ArgoCD continuously reconciles the cluster state against what is declared in Git. A Root Application and its AppProject are defined as a static manifest at `platform/gitops/argocd/root-app.yaml`, applied once with `kubectl apply` when bootstrapping a new cluster. From that point on, ArgoCD reconciles the Root Application from Git like any other Application — including itself. The Root Application watches `platform/gitops/argocd/applications/` and manages four child Applications, each deployed in a specific sync wave to respect dependency ordering.
+- **GitOps Layer** — ArgoCD continuously reconciles cluster state against Git. A Root Application and its AppProject are a static manifest at `platform/gitops/argocd/root-app.yaml`, applied once with `kubectl apply` when bootstrapping a new cluster. From then on ArgoCD reconciles it like any other Application — including itself. It watches `platform/gitops/argocd/applications/` and manages four child Applications, each in its own sync wave.
 
-- **Security Layer** — Controls operate at four points in the lifecycle: OPA Rego evaluates Terraform plans before apply, Trivy scans container images before they reach the registry, OPA Gatekeeper validates every Pod at admission time, and Falco inspects syscalls at runtime on every node.
+- **Security Layer** — controls at four points: OPA Rego evaluates Terraform plans before apply, Trivy scans images before they reach the registry, OPA Gatekeeper validates every Pod at admission, and Falco inspects syscalls at runtime on every node.
 
-- **Observability Layer** — Prometheus scrapes metrics from the cluster, ArgoCD, Gatekeeper, Falco, and the application services. Grafana visualizes them through three custom dashboards, and Alertmanager routes alert conditions to Slack.
+- **Observability Layer** — Prometheus scrapes the cluster, ArgoCD, Gatekeeper, Falco, and application services. Grafana visualizes it via three dashboards; Alertmanager routes alerts to Slack.
 
-- **Application Layer** — Online Boutique runs as 11 interconnected gRPC microservices plus a Redis cache and a load generator, deployed as Argo Rollouts resources to support Blue/Green delivery.
+- **Application Layer** — Online Boutique runs as 11 gRPC microservices plus a Redis cache and a load generator, deployed as Argo Rollouts resources for Blue/Green delivery.
 
 ### End-to-End Platform Flow
 
@@ -110,7 +110,7 @@ flowchart TD
 
 ### Sync Wave Ordering
 
-ArgoCD deploys platform components in strict wave order so that admission webhooks and dependencies are ready before the components that depend on them start.
+Components deploy in strict wave order so admission webhooks and dependencies are ready before the components that need them start.
 
 ```mermaid
 flowchart TD
@@ -127,7 +127,7 @@ flowchart TD
 
 ### Terraform / GitOps Ownership Boundary
 
-A Terraform-managed Kubernetes resource tracks the entire object, including fields ArgoCD rewrites continuously (sync status, health, last operation result). Keeping the Root Application and AppProject outside Terraform avoids those reconciliations being mistaken for configuration drift, and keeps the boundary between the two tools unambiguous:
+A Terraform-managed Kubernetes resource tracks the entire object, including fields ArgoCD rewrites continuously (sync status, health, last operation). Keeping the Root Application and AppProject outside Terraform avoids mistaking those reconciliations for drift, and keeps the boundary between the two tools clean:
 
 ```mermaid
 flowchart LR
@@ -181,7 +181,7 @@ flowchart TB
     PubB -->|NAT, shared in dev| PrivB
 ```
 
-The VPC module applies Kubernetes-specific subnet tags required by the AWS Load Balancer Controller for automatic subnet discovery:
+The VPC module applies the Kubernetes subnet tags the AWS Load Balancer Controller needs for automatic subnet discovery:
 
 | Tag | Value | Subnet | Purpose |
 |---|---|---|---|
@@ -200,7 +200,7 @@ The VPC module applies Kubernetes-specific subnet tags required by the AWS Load 
 
 ### Amazon EKS
 
-The cluster (`eks-devsecops-dev-cluster`, Kubernetes 1.33) runs a single managed node group of `t3.medium` instances (`AL2023_x86_64_STANDARD`, on-demand, 20 GiB gp3 disk) with `desired=2, min=1, max=3` and a rolling update strategy (`max_unavailable=1`). API access is configured for both public and private endpoints, and control plane logs (`api`, `audit`, `authenticator`, `controllerManager`, `scheduler`) are shipped to CloudWatch.
+The cluster (`eks-devsecops-dev-cluster`, Kubernetes 1.33) runs one managed node group of `t3.medium` instances (`AL2023_x86_64_STANDARD`, on-demand, 20 GiB gp3) with `desired=2, min=1, max=3` and rolling updates (`max_unavailable=1`). Public and private API endpoints are both enabled, and control plane logs (`api`, `audit`, `authenticator`, `controllerManager`, `scheduler`) go to CloudWatch.
 
 Terraform manages four EKS addons:
 
@@ -213,11 +213,11 @@ Terraform manages four EKS addons:
 
 ### Amazon ECR
 
-Eleven ECR repositories — one per Online Boutique service — are provisioned with lifecycle policies. `scan_on_push` is enabled so every pushed image is rescanned by AWS independently of the CI pipeline's own Trivy scan.
+Eleven repositories, one per Online Boutique service, each with a lifecycle policy. `scan_on_push` is enabled so AWS rescans every pushed image independently of CI's own Trivy scan.
 
 ### Amazon RDS
 
-A PostgreSQL instance runs with a custom parameter group enabling connection, disconnection, DDL, and slow-query logging (threshold 1000ms). The parameter group family is matched to the configured engine version. It is Single-AZ in dev and Multi-AZ in production. Automated backups are retained for 7 days with PITR, and Performance Insights is enabled.
+PostgreSQL with a custom parameter group logging connections, disconnections, DDL, and slow queries (threshold 1000ms), matched to the engine version. Single-AZ in dev, Multi-AZ in production. Backups retained 7 days with PITR; Performance Insights enabled.
 
 ### IAM & IRSA
 
@@ -228,15 +228,15 @@ A PostgreSQL instance runs with a custom parameter group enabling connection, di
 | EBS CSI Driver (IRSA) | OIDC → `kube-system:ebs-csi-controller-sa` | `AmazonEBSCSIDriverPolicy` |
 | AWS LBC (IRSA) | OIDC → `kube-system:aws-load-balancer-controller` | Custom policy for ALB/NLB management |
 
-IRSA grants AWS permissions at the pod level rather than the node level — a compromised pod cannot inherit the full node role. This is why the AWS Load Balancer Controller and EBS CSI Driver use IRSA instead of broader node IAM policies.
+IRSA grants AWS permissions at the pod level, not the node level — a compromised pod can't inherit the full node role. That's why AWS LBC and the EBS CSI Driver use IRSA instead of broader node IAM policies.
 
-> **Operational note — AWS LBC via Kustomize `helmCharts`:** Kustomize's built-in Helm inflator renders a chart's templates but does **not** install CRDs bundled under the chart's `crds/` folder the way `helm install` does. The AWS Load Balancer Controller chart ships a `TargetGroupBinding`/`IngressClassParams` CRD bundle, so it must be listed explicitly as a `resources:` entry in `kustomization.yaml` — otherwise the controller pod crash-loops with `no matches for kind "TargetGroupBinding" in version "elbv2.k8s.aws/v1beta1"`. Likewise, `clusterName`/`region`/`vpcId` for the controller are supplied via `valuesFile: values.rendered.yaml` (regenerated from live Terraform outputs by `scripts/Render-LbcValues.ps1`) rather than a hardcoded `valuesInline` block, so a stale or placeholder VPC ID can't silently point the controller at a non-existent VPC.
+> **Operational note — AWS LBC via Kustomize `helmCharts`:** Kustomize's Helm inflator renders chart templates but does **not** install CRDs bundled under the chart's `crds/` folder, unlike `helm install`. The AWS Load Balancer Controller chart ships a `TargetGroupBinding`/`IngressClassParams` CRD bundle that must be listed explicitly under `resources:` in `kustomization.yaml` — otherwise the controller pod crash-loops with `no matches for kind "TargetGroupBinding" in version "elbv2.k8s.aws/v1beta1"`. Likewise, `clusterName`/`region`/`vpcId` come from `valuesFile: values.rendered.yaml` (regenerated from live Terraform outputs by `scripts/Render-LbcValues.ps1`), not a hardcoded `valuesInline` block, so a stale VPC ID can't silently point the controller at a non-existent VPC.
 
 ### Terraform State Management
 
-A one-time `bootstrap` module (run with local state) creates the remote backend: an S3 bucket with versioning, KMS encryption (auto-rotating key), blocked public access, and a 90-day non-current version expiry; and a DynamoDB lock table with `PAY_PER_REQUEST` billing and point-in-time recovery enabled. All subsequent environments use this backend for state locking and encryption.
+A one-time `bootstrap` module (local state) creates the remote backend: an S3 bucket with versioning, KMS encryption, blocked public access, and 90-day non-current version expiry; and a DynamoDB lock table with `PAY_PER_REQUEST` billing and point-in-time recovery. Every environment after that uses this backend.
 
-A separate one-time `oidc-bootstrap` module, also run with local state, creates the GitHub OIDC Identity Provider and the IAM role GitHub Actions assumes for `terraform-cd`/`app-cd`. Both bootstrap modules run before any remote backend or CI/CD role exists, so local state is the only option — see [Section 11](#11-deployment-guide) for the exact order of operations.
+A separate one-time `oidc-bootstrap` module, also local state, creates the GitHub OIDC Identity Provider and the IAM role GitHub Actions assumes for `terraform-cd`/`app-cd`. Both run before any remote backend or CI/CD role exists, so local state is the only option — see [Section 11](#11-deployment-guide) for the order of operations.
 
 ### High Availability Considerations
 
@@ -255,11 +255,11 @@ A separate one-time `oidc-bootstrap` module, also run with local state, creates 
 
 ### Application CI Pipeline (`app-ci.yaml`)
 
-Triggered on PRs to `develop` / `feature/**`. Gitleaks secret scanning runs as a hard gate across the full git history; if it passes, the pipeline runs Kustomize build validation against the Kubernetes 1.33 schema, OPA policy unit tests, Falco rule validation, and a non-blocking Trivy filesystem scan whose results are uploaded to the GitHub Security tab.
+Triggered on PRs to `develop` / `feature/**`. Gitleaks scans the full git history as a hard gate; once it passes, Kustomize build validation runs against the Kubernetes 1.33 schema, along with OPA policy unit tests, Falco rule validation, and a non-blocking Trivy filesystem scan uploaded to the GitHub Security tab.
 
 ### Application CD Pipeline (`app-cd.yaml`)
 
-Triggered on pushes to `main` that touch microservice paths. A `git diff`-based step detects which services changed, then a parallel matrix job builds, scans, and pushes only those services:
+Triggered on pushes to `main` touching microservice paths. A `git diff`-based step detects which services changed, then a matrix job builds, scans, and pushes only those:
 
 ```mermaid
 flowchart LR
@@ -274,19 +274,19 @@ flowchart LR
 
 ### Infrastructure CI Pipeline (`terraform-ci.yaml`)
 
-Triggered on PRs to `develop` / `feature/**` touching Terraform paths. Runs `terraform fmt`/`validate`, `tflint` for AWS provider best practices, `tfsec` for static security misconfigurations, and Checkov for CIS/NIST/SOC 2 compliance mappings — all with results posted to the PR and the Security tab.
+Triggered on PRs to `develop` / `feature/**` touching Terraform paths. Runs `terraform fmt`/`validate`, `tflint`, `tfsec`, and Checkov (CIS/NIST/SOC 2 mappings) — results posted to the PR and Security tab.
 
 ### Infrastructure CD Pipeline (`terraform-cd.yaml`)
 
-Triggered on push to `main` or manual dispatch. The pipeline runs `terraform plan`, exports the plan as JSON, evaluates it against three OPA Rego policy files (deny rules block apply; warn rules are logged only), and only proceeds to `terraform apply` if the policy gate passes. A separate `destroy` job is manual-dispatch-only and runs in an isolated environment requiring multiple reviewers.
+Triggered on push to `main` or manual dispatch. Runs `terraform plan`, exports it as JSON, evaluates it against three OPA Rego policy files (deny rules block apply; warn rules are logged only), and only proceeds to `apply` if the gate passes. A separate `destroy` job is manual-dispatch-only, in an isolated environment requiring multiple reviewers.
 
 ### ArgoCD Synchronization Flow
 
-The Root Application — a static manifest at `platform/gitops/argocd/root-app.yaml`, applied once via `kubectl apply` after Terraform installs ArgoCD — watches `platform/gitops/argocd/applications/` and manages four child Applications. ArgoCD polls Git roughly every three minutes, detects divergence, and reconciles via a Kustomize build followed by server-side apply. `selfHeal: true` means any out-of-band manual cluster change is automatically reverted to the Git-declared state, and this applies to the Root Application itself once bootstrapped.
+The Root Application — a static manifest at `platform/gitops/argocd/root-app.yaml`, applied once after Terraform installs ArgoCD — watches `platform/gitops/argocd/applications/` and manages four child Applications. ArgoCD polls Git roughly every three minutes, detects divergence, and reconciles via Kustomize build + server-side apply. `selfHeal: true` means any out-of-band manual change is automatically reverted, including on the Root Application itself.
 
 ### Deployment Strategy
 
-Online Boutique services use **Blue/Green** deployment via Argo Rollouts. A new green ReplicaSet is fully provisioned and health-checked before any traffic shifts; the blue ReplicaSet continues serving all production traffic until cutover. Each service exposes two Kubernetes Services — `<name>-active` and `<name>-preview` — and after `autoPromotionSeconds`, Argo Rollouts atomically patches the active Service selector.
+Online Boutique services use **Blue/Green** via Argo Rollouts. A new green ReplicaSet is fully provisioned and health-checked before traffic shifts; blue keeps serving all traffic until cutover. Each service exposes `<name>-active` and `<name>-preview` Services, and after `autoPromotionSeconds`, Argo Rollouts atomically patches the active Service selector.
 
 ```mermaid
 sequenceDiagram
@@ -304,13 +304,13 @@ sequenceDiagram
 
 ### Rollback Strategy
 
-During `scaleDownDelaySeconds` after promotion, the blue ReplicaSet is still running — rollback is a single command and traffic returns to blue within seconds:
+While `scaleDownDelaySeconds` hasn't elapsed, blue is still running — rollback is one command, and traffic returns within seconds:
 
 ```bash
 kubectl argo rollouts undo <service-name> -n online-boutique
 ```
 
-After blue has been scaled down, rollback happens by reverting the image tag commit in Git (`git revert`) and letting ArgoCD re-sync, which runs a fresh Blue/Green cycle with the previous image.
+Once blue is scaled down, rollback means reverting the image tag commit in Git (`git revert`) and letting ArgoCD re-sync, running a fresh Blue/Green cycle with the previous image.
 
 ---
 
@@ -330,7 +330,7 @@ After blue has been scaled down, rollback happens by reverting the image tag com
 
 ### OIDC Authentication
 
-All workflows authenticate to AWS via OpenID Connect rather than long-lived access keys. GitHub Actions exchanges a short-lived OIDC token for temporary AWS credentials, scoped by a trust policy that restricts which repository (and optionally which environment) is allowed to assume the role. This removes the need to store or rotate static AWS access keys in GitHub secrets.
+Workflows authenticate to AWS via OpenID Connect, not long-lived access keys. GitHub Actions exchanges a short-lived OIDC token for temporary AWS credentials, scoped by a trust policy restricting which repository (and optionally environment) can assume the role — no static AWS keys stored or rotated in GitHub secrets.
 
 For production, tighten the `sub` condition to `environment:dev-apply` to restrict role assumption to the apply job only.
 
@@ -342,13 +342,13 @@ For production, tighten the `sub` condition to `environment:dev-apply` to restri
 | `dev-apply` | `terraform-cd` → apply | Optional required reviewers for controlled applies |
 | `dev-destroy` | `terraform-cd` → destroy | **Mandatory: 2+ required reviewers, restricted to `main`** |
 
-> `dev-destroy` must always be protected — an unprotected destroy environment with `workflow_dispatch` access can result in complete infrastructure loss in under 15 minutes.
+> `dev-destroy` must always be protected — an unprotected destroy environment with `workflow_dispatch` access can wipe out all infrastructure in under 15 minutes.
 
 ---
 
 ## 8. Security Architecture
 
-Security is enforced through a defense-in-depth approach with controls at each stage of the delivery lifecycle.
+Defense-in-depth, with controls at every stage of the delivery lifecycle.
 
 ```mermaid
 flowchart LR
@@ -369,11 +369,11 @@ flowchart LR
 
 ### Shift-Left Security
 
-Gitleaks scans the full git history on every PR as a hard gate — a single detected secret stops the entire pipeline. Trivy performs a filesystem scan of source code before any image is built, uploading results to the GitHub Security tab as SARIF.
+Gitleaks scans the full git history on every PR as a hard gate — one detected secret stops the whole pipeline. Trivy scans source code before any image build, uploading SARIF results to the GitHub Security tab.
 
 ### Infrastructure Security
 
-`terraform plan` output is converted to JSON and evaluated against three OPA Rego policy files before `apply` is permitted:
+`terraform plan` is converted to JSON and evaluated against three OPA Rego policy files before `apply` is allowed:
 
 | Policy File | Key `deny` Rules |
 |---|---|
@@ -381,7 +381,7 @@ Gitleaks scans the full git history on every PR as a hard gate — a single dete
 | `networking.rego` | Security Group allowing all inbound, SSH open to internet (port 22), EKS nodes in public subnets |
 | `compliance.rego` | Missing required tags (`Project`, `Environment`, `ManagedBy`), EBS volume unencrypted, S3 bucket without server-side encryption |
 
-`tfsec` and Checkov additionally run in CI to catch static misconfigurations and map findings to CIS/NIST/SOC 2 compliance frameworks.
+`tfsec` and Checkov also run in CI, catching static misconfigurations and mapping findings to CIS/NIST/SOC 2 frameworks.
 
 ### Kubernetes Security
 
@@ -397,15 +397,15 @@ OPA Gatekeeper enforces seven admission policies on every Pod:
 | `require-read-only-root-filesystem` | All namespaces | Rejected — read-only root filesystem required |
 | `require-resource-limits` | All namespaces | Rejected — CPU/memory limits required |
 
-System namespaces (`kube-system`, `gatekeeper-system`, `falco`, `monitoring`, `argocd`) are excluded from enforcement to avoid bootstrapping deadlocks.
+System namespaces (`kube-system`, `gatekeeper-system`, `falco`, `monitoring`, `argocd`) are excluded to avoid bootstrapping deadlocks.
 
 ### Runtime Security
 
-Falco runs as a DaemonSet on every node using the `modern_ebpf` driver, performing syscall-level threat detection and alerting on suspicious runtime behavior such as shell execution inside containers or unexpected privilege escalation.
+Falco runs as a DaemonSet on every node using the `modern_ebpf` driver, doing syscall-level threat detection and alerting on suspicious behavior such as shell execution inside containers or unexpected privilege escalation.
 
 ### IAM Security
 
-No long-lived AWS access keys are used anywhere: GitHub Actions authenticates via OIDC, EC2 nodes use instance profiles, and platform controllers use IRSA scoped to specific Kubernetes service accounts. ArgoCD RBAC defaults to `readonly`; admin access requires `platform-admins` group membership.
+No long-lived AWS access keys anywhere: GitHub Actions uses OIDC, EC2 nodes use instance profiles, platform controllers use IRSA scoped to specific service accounts. ArgoCD RBAC defaults to `readonly`; admin access requires `platform-admins` group membership.
 
 ### Defense-in-Depth Summary
 
@@ -425,15 +425,15 @@ No long-lived AWS access keys are used anywhere: GitHub Actions authenticates vi
 
 ### Prometheus
 
-Prometheus, deployed via kube-prometheus-stack, scrapes node-exporter, kube-state-metrics, ArgoCD, OPA Gatekeeper, Falco, and the Online Boutique services' `/metrics` endpoints. EKS control plane logs are shipped to CloudWatch (`api`, `audit`, `authenticator`, `controllerManager`, `scheduler`).
+Deployed via kube-prometheus-stack, scraping node-exporter, kube-state-metrics, ArgoCD, OPA Gatekeeper, Falco, and Online Boutique's `/metrics` endpoints. EKS control plane logs ship to CloudWatch (`api`, `audit`, `authenticator`, `controllerManager`, `scheduler`).
 
 ### Grafana
 
-Three custom Grafana dashboards are provisioned via ConfigMaps: a cluster overview (node status, pod counts, ArgoCD application health), node metrics (per-node CPU/memory/disk/network), and application metrics (request rate, error rate, and latency for Online Boutique using the RED method).
+Three dashboards provisioned via ConfigMaps: cluster overview (node status, pod counts, ArgoCD application health), node metrics (per-node CPU/memory/disk/network), and application metrics (request rate, error rate, latency using the RED method).
 
 ### Alertmanager
 
-Three Prometheus alert rules route to Slack via Alertmanager: high CPU usage (node > 80% for 5 min), high memory usage (node > 85% for 5 min), and pod restart loops (> 5 restarts in 15 min).
+Three alert rules route to Slack: high CPU (node > 80% for 5 min), high memory (node > 85% for 5 min), and pod restart loops (> 5 restarts in 15 min).
 
 ```mermaid
 flowchart LR
@@ -449,7 +449,7 @@ flowchart LR
 
 ### Online Boutique Overview
 
-Online Boutique is Google's open-source microservices demo, deployed here as the platform's workload. It consists of 11 services written across Go, Python, Node.js, Java, and C#, plus a Redis cache for cart state and a Locust-based load generator that simulates realistic user traffic.
+Google's open-source microservices demo, deployed here as the platform's workload: 11 services across Go, Python, Node.js, Java, and C#, a Redis cache for cart state, and a Locust-based load generator simulating realistic traffic.
 
 ### Core Services
 
@@ -488,7 +488,7 @@ flowchart TD
     Checkout -->|gRPC| Email[emailservice]
 ```
 
-All inter-service communication uses gRPC over the cluster's internal DNS. The frontend is the only service exposed externally via the ALB Ingress, and integrates with the platform the same way every other workload does — deployed by ArgoCD, governed by OPA Gatekeeper, observed by Falco, and scraped by Prometheus.
+All inter-service communication uses gRPC over the cluster's internal DNS. Only `frontend` is exposed externally, via the ALB Ingress — and it integrates with the platform like any other workload: deployed by ArgoCD, governed by OPA Gatekeeper, observed by Falco, scraped by Prometheus.
 
 ---
 
@@ -506,7 +506,7 @@ Ensure AWS credentials are configured and the GitHub repository secrets from [Se
 
 ### Bootstrap GitHub OIDC for CI/CD
 
-Run once, using local AWS credentials with IAM admin permissions, **before** setting up the `AWS_DEV_ROLE_ARN` GitHub secret or running any GitHub Actions workflow. This module creates the GitHub OIDC Identity Provider and the IAM role (`github-actions-terraform-dev`) that GitHub Actions assumes via `sts:AssumeRoleWithWebIdentity` — no static AWS access keys are stored in GitHub.
+Run once, with local AWS credentials that have IAM admin permissions, **before** setting up the `AWS_DEV_ROLE_ARN` GitHub secret or running any workflow. This creates the GitHub OIDC Identity Provider and the IAM role (`github-actions-terraform-dev`) GitHub Actions assumes via `sts:AssumeRoleWithWebIdentity` — no static AWS keys stored in GitHub.
 
 ```bash
 cd platform/infrastructure/terraform/oidc-bootstrap
@@ -522,16 +522,16 @@ terraform plan
 terraform apply
 ```
 
-> **Local state only, by design.** Like `bootstrap/`, this module intentionally uses local state — the S3 backend and the role it authenticates don't exist yet at this point, so there's nothing remote to store state in. Do **not** delete the generated `terraform.tfstate`/`terraform.tfstate.backup`; keep them (e.g. encrypted in a password manager or a separate private bucket) so the OIDC provider and role can be updated or destroyed cleanly later instead of being re-imported by hand.
+> **Local state only, by design.** Like `bootstrap/`, this module uses local state — the S3 backend and the role it authenticates don't exist yet, so there's nothing remote to store state in. Keep the generated `terraform.tfstate`/`terraform.tfstate.backup` (e.g. encrypted in a password manager or a separate private bucket) so the OIDC provider and role can be updated or destroyed cleanly, instead of re-imported by hand.
 
-Retrieve the role ARN and use it as the `AWS_DEV_ROLE_ARN` GitHub repository secret:
+Retrieve the role ARN and use it as the `AWS_DEV_ROLE_ARN` GitHub secret:
 
 ```bash
 aws iam get-role --role-name github-actions-terraform-dev \
   --query 'Role.Arn' --output text
 ```
 
-> **Dev vs. prod scope.** The role's trust policy condition (`token.actions.githubusercontent.com:sub`) currently allows `repo:<org>/<repo>:*` — any branch, any workflow, any environment in the repo. This is intentionally broad for the dev environment. The role is also attached to `AdministratorAccess` for the same reason — dev needs to freely provision any resource type while the platform is under active development. Before reusing this module for production, tighten the `sub` condition to a specific environment (e.g. `repo:<org>/<repo>:environment:prod-apply`) and replace `AdministratorAccess` with a least-privilege policy scoped to the services Terraform actually manages (VPC, EKS, ECR, RDS, IAM, S3, DynamoDB, KMS).
+> **Dev vs. prod scope.** The role's trust policy condition (`token.actions.githubusercontent.com:sub`) currently allows `repo:<org>/<repo>:*` — any branch, workflow, or environment. This is intentionally broad for dev, and the role is attached to `AdministratorAccess` for the same reason. Before reusing this module for production, tighten `sub` to a specific environment (e.g. `repo:<org>/<repo>:environment:prod-apply`) and replace `AdministratorAccess` with a least-privilege policy scoped to what Terraform actually manages (VPC, EKS, ECR, RDS, IAM, S3, DynamoDB, KMS).
 
 ### Bootstrap Terraform Backend
 
@@ -546,7 +546,7 @@ Note the outputs, then configure `environments/dev/backend.tf` with the bucket n
 
 ### Deploy Infrastructure
 
-**Option A — GitHub Actions (recommended):** Push any change to `platform/infrastructure/terraform/environments/dev/` on `main`, or trigger `terraform-cd.yaml` manually with `action: apply`. The pipeline runs plan → OPA gate → apply automatically.
+**Option A — GitHub Actions (recommended):** push any change to `platform/infrastructure/terraform/environments/dev/` on `main`, or trigger `terraform-cd.yaml` manually with `action: apply`. The pipeline runs plan → OPA gate → apply automatically.
 
 **Option B — Manual:**
 
@@ -558,7 +558,7 @@ terraform plan
 terraform apply -auto-approve
 ```
 
-This provisions the VPC, EKS cluster, ECR repositories, RDS instance, and installs ArgoCD on the cluster. It does **not** create the Root Application — that is a separate, manual step below.
+This provisions the VPC, EKS cluster, ECR repositories, RDS instance, and installs ArgoCD. It does **not** create the Root Application — that's a separate step below.
 
 ### Configure kubectl
 
@@ -605,7 +605,7 @@ Open `https://localhost:8080`.
 
 ### Bootstrap the Root Application
 
-This step is required once per cluster, immediately after ArgoCD is installed. It creates the AppProject and the Root Application from a static manifest, after which ArgoCD reconciles both directly from Git:
+Required once per cluster, immediately after ArgoCD is installed. Creates the AppProject and Root Application from a static manifest; ArgoCD then reconciles both directly from Git:
 
 ```bash
 kubectl apply -f platform/gitops/argocd/root-app.yaml
@@ -619,7 +619,7 @@ The Root Application should reach `Synced / Healthy`, and the four child Applica
 
 ### Deploy Application
 
-ArgoCD deploys Online Boutique automatically at wave 4 — no manual step is required.
+ArgoCD deploys Online Boutique automatically at wave 4 — no manual step required.
 
 ```bash
 kubectl get pods -n online-boutique
