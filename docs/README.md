@@ -1,3 +1,4 @@
+```text
 docs/diagrams/
 Source file cho diagrams — không phải ảnh PNG, mà là file có thể edit được.
 diagrams/
@@ -6,8 +7,9 @@ diagrams/
 ├── gitops-flow.drawio           # Git push → ArgoCD → EKS flow
 ├── cicd-pipeline.drawio         # CI/CD pipeline với security gates
 └── security-layers.drawio       # Defense-in-depth diagram
+```
 
-
+```text
 docs/images/
 Ảnh export từ diagrams hoặc screenshots — dùng để nhúng vào README và markdown files.
 images/
@@ -17,3 +19,4 @@ images/
 ├── gitops-flow.png
 ├── cicd-pipeline.png
 └── argocd-screenshot.png        # Screenshot ArgoCD UI sau khi deploy
+```

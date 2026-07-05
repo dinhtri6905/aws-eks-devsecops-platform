@@ -1,6 +1,6 @@
 # CI/CD Pipelines & OPA Policies
 
-Reference documentation for the GitHub Actions automation and OPA policy enforcement layer of the **Cloud-Native Secure GitOps Platform on AWS EKS**.
+Reference documentation for the GitHub Actions automation layer and the OPA policy enforcement layer of the **Cloud-Native Secure GitOps Platform on AWS EKS**.
 
 ---
 
@@ -30,15 +30,31 @@ Reference documentation for the GitHub Actions automation and OPA policy enforce
 └── workflows/
     ├── terraform-ci.yaml   # Terraform static analysis: fmt / validate / tflint / tfsec / checkov
     ├── terraform-cd.yaml   # Terraform delivery: plan → OPA gate → apply / destroy
-    ├── check-scan.yaml     # Scheduled deep security scan: OPA full + tfsec extended ruleset
+    ├── check-scan.yaml     # On-demand security scan: OPA full (3 policies) + tfsec deep scan
     ├── app-ci.yaml         # Application CI: gitleaks / kustomize validate / OPA k8s / falco / trivy fs
     └── app-cd.yaml         # Application CD: build → Trivy image scan → push ECR → update Kustomize → commit
 
 platform/infrastructure/terraform/
+├── environments/dev/       # TF_WORKING_DIR used by terraform-ci, terraform-cd, check-scan
+├── modules/
 └── policies/
-    ├── security.rego       # EKS / ECR / RDS / IAM hardening rules
-    ├── networking.rego     # VPC / Subnet / Security Group rules
-    └── compliance.rego     # Tagging standards and encryption-at-rest requirements
+    ├── security.rego       # package data.terraform.security
+    ├── networking.rego     # package data.terraform.networking
+    └── compliance.rego     # package data.terraform.compliance
+
+platform/security/
+├── opa/                    # OPA unit tests for K8s admission (used by app-ci: opa-k8s-policies)
+└── falco/                  # Falco rules (*.yaml/*.yml), validated by app-ci: falco-validate
+
+platform/gitops/
+├── scripts/Render-LbcValues.ps1
+├── kustomize/
+│   ├── platform-services/aws-load-balancer-controller/values.yaml (+ values.rendered.yaml)
+│   ├── platform-services/, security/, observability/, applications/online-boutique/   # built by app-ci: kustomize-validate
+│   └── overlays/dev/applications/online-boutique/kustomization.yaml   # updated by app-cd: update-gitops
+
+microservices-application/
+└── <service>/Dockerfile    # built by app-cd: build-and-scan (matrix per service)
 ```
 
 ---
@@ -46,48 +62,41 @@ platform/infrastructure/terraform/
 ## End-to-End Flow
 
 ```text
- Developer pushes to feature/** or develop
+terraform-ci.yaml
+  (push develop/feature/** or PR → develop, paths: environments/dev/**, modules/**, policies/**)
           │
           ▼
- ┌──────────────────────────────────────────┐
- │  app-ci.yaml                             │
- │                                          │
- │  gitleaks (hard gate)                    │
- │      ├── kustomize-validate              │
- │      ├── opa-k8s-policies               │
- │      ├── falco-validate                 │
- │      └── trivy-filesystem               │
- │                                          │
- │  └── PR comment + Slack notification    │
- └──────────────────────────────────────────┘
-          │
-          │  PR approved and merged to main
-          │
-          ├─────────────────────────────────────────────────────────────┐
-          │                                                             │
-          ▼  (terraform/** changed)                                     ▼  (microservices-application/** changed)
- ┌────────────────────────────┐                              ┌──────────────────────────────────┐
- │  terraform-cd.yaml         │                              │  app-cd.yaml                     │
- │                            │                              │                                  │
- │  plan                      │                              │  detect-changes                  │
- │   └── opa-gate             │                              │   └── build-and-scan (matrix)    │
- │         └── apply          │                              │         └── update-gitops        │
- └────────────────────────────┘                              │               │                  │
-                                                             │               ▼                  │
-                                                             │  kustomization.yaml committed    │
-                                                             └──────────────────────────────────┘
-                                                                             │
-                                                                             ▼
-                                                              ArgoCD detects manifest change
-                                                                             │
-                                                                             ▼
-                                                              Rolling update deployed to EKS
+ validate ──► tflint ──┐
+          ├──► tfsec   ├──► ci-summary → PR comment + Slack
+          └──► checkov ┘
 
- Nightly (scheduled):
- └── check-scan.yaml
-       ├── opa-full-scan  →  all three policies against latest plan JSON
-       └── tfsec-deep     →  extended ruleset scan
-             └── SARIF upload → GitHub Security tab + Slack
+terraform-cd.yaml (workflow_dispatch: action = plan/apply/destroy)
+   plan ──► opa-gate (security + networking + compliance .rego) ──► apply
+                │ deny > 0                                            │
+                └──► notify-opa-deny (Slack)          render LBC values → commit [skip ci]
+                                                                        │
+                                                                        ▼
+                                                               notify-apply (Slack)
+
+app-ci.yaml (workflow_dispatch)
+   gitleaks ──► kustomize-validate ─┐
+            ├──► opa-k8s-policies    ├──► app-ci-summary → Step Summary + PR comment + Slack
+            ├──► falco-validate      │
+            └──► trivy-filesystem   ─┘
+          │
+          ▼
+ app-cd.yaml (workflow_dispatch, optional service input)
+   detect-changes ──► build-and-scan (matrix, fail-fast:false, Trivy image scan blocks CRITICAL)
+                              │
+                              ▼
+                     update-gitops (only updates services with status=success)
+                              │
+                              ▼
+                     kustomization.yaml committed to main → ArgoCD auto-syncs
+
+check-scan.yaml (workflow_dispatch: scan_type = all/opa-only/tfsec-only)
+   opa-full-scan (3 policies: deny + warn) ──┐
+   tfsec-deep (full ruleset)                 ├──► generate-reports → Step Summary + Slack
 ```
 
 ---
@@ -96,30 +105,28 @@ platform/infrastructure/terraform/
 
 ### terraform-ci.yaml
 
-**Trigger:** Push or PR to `develop` / `feature/**` — paths `platform/infrastructure/terraform/**`
+**Trigger:** `push` to `develop` / `feature/**`, `pull_request` → `develop`, and `workflow_dispatch` (input `scan_type`: `all`/`validate`/`tflint`/`tfsec`/`checkov`). Only triggers when changes fall under `platform/infrastructure/terraform/environments/dev/**`, `.../modules/**`, `.../policies/**`, or the workflow file itself.
 
-**Purpose:** Static analysis gate that runs before any infrastructure change reaches a plan or apply. Catches formatting inconsistencies, provider misconfigurations, and security findings early in the development loop.
+**Purpose:** Static analysis gate that runs before any infrastructure change reaches a plan or apply.
 
 **Job flow:**
 
 ```text
-fmt-validate ─┐
-tflint        ├──► ci-summary → PR comment + Slack
-tfsec         │
-checkov       ┘
+validate ─┐
+tflint    ├──► ci-summary → PR comment + Slack
+tfsec     │
+checkov   ┘
 ```
 
-All four analysis jobs run in parallel. `ci-summary` collects results regardless of individual job outcomes and produces a unified PR comment and Slack notification.
+`tflint`, `tfsec`, and `checkov` all `needs: validate` and then run in parallel.
 
-| Job | Tool | Scope |
+| Job | Tool | Notes |
 |---|---|---|
-| `fmt-validate` | `terraform fmt -check` + `terraform validate` | Formatting consistency and HCL syntax |
-| `tflint` | TFLint + AWS ruleset | AWS provider best practices, deprecated arguments, invalid resource configurations |
-| `tfsec` | tfsec | Static security misconfigurations across all `.tf` files |
-| `checkov` | Checkov | CIS Benchmark, NIST, and SOC 2 compliance mappings for AWS resources |
-| `ci-summary` | — | Aggregates all results, posts PR comment, notifies Slack |
-
-**Security tab integration:** `tfsec` and `checkov` produce SARIF output uploaded to the GitHub Security tab under **Security → Code scanning alerts**.
+| `validate` | `terraform fmt -check -recursive -diff` + `terraform init -backend=false` + `terraform validate` | Comments the result on the PR |
+| `tflint` | TFLint + AWS plugin `0.30.0` | Rules: naming convention, required providers/version, unused declarations, documented variables/outputs. Exports JSON as artifact `tflint-report`, comments the first 10 issues on the PR |
+| `tfsec` | `aquasecurity/tfsec-action@v1.0.0` + a second Docker-based run for JSON | `soft_fail` = `true` on `feature/**` branches, `false` on other branches. Artifact `tfsec-report` |
+| `checkov` | `bridgecrewio/checkov-action@master`, SARIF output | Skips checks `CKV_AWS_8`, `CKV2_AWS_12`. SARIF uploaded to **Security → Code scanning alerts** (category `Checkov-Terraform-DEV`), artifact `checkov-report`, comments the first 8 HIGH/CRITICAL issues on the PR |
+| `ci-summary` | — | `needs` all 4 jobs above, `if: always()`. Downloads all artifacts, writes the Step Summary, posts a combined PR comment, notifies Slack |
 
 **Required secrets:** `SLACK_WEBHOOK_URL`
 
@@ -127,93 +134,81 @@ All four analysis jobs run in parallel. `ci-summary` collects results regardless
 
 ### terraform-cd.yaml
 
-**Trigger:**
-- Automatic — push to `main` when files under `platform/infrastructure/terraform/**` change
-- Manual — `workflow_dispatch` with `action` (`plan` / `apply` / `destroy`) and `environment` (`dev`)
+**Trigger:** `workflow_dispatch` only, with inputs `action` (`plan`/`apply`/`destroy`, default `plan`) and `environment` (`dev`, default `dev`, currently the only option).
 
-**Purpose:** Controlled, policy-gated infrastructure delivery. An OPA evaluation step sits between `plan` and `apply` — no infrastructure change is applied without passing all three policy files.
+**Concurrency:** `group: terraform-cd-<environment>`, `cancel-in-progress: false` — only one CD run at a time.
+
+**Purpose:** Policy-gated infrastructure delivery — an OPA evaluation step sits between `plan` and `apply`; no infrastructure change is applied without passing all three policy files.
 
 **Job flow:**
 
 ```text
-plan ──► opa-gate ──► apply
+plan ──► opa-gate ──► apply ──► notify-apply
               │
-              └──► BLOCKED if any deny violation
+              └──► notify-opa-deny (if opa-gate fails)
 
-destroy  (manual dispatch only — isolated environment with required reviewers)
+destroy (manual dispatch only, action=destroy) ──► notify-destroy
 ```
 
 | Job | Description |
 |---|---|
-| `plan` | Runs `terraform init` and `terraform plan -out tfplan`. Exports the plan as JSON via `terraform show -json` and uploads it as a workflow artifact for OPA consumption. |
-| `opa-gate` | Downloads the plan artifact and evaluates it against `security.rego`, `networking.rego`, and `compliance.rego`. Any `deny` violation causes this job to exit non-zero, preventing `apply` from running. `warn` violations are printed to the log but do not block. |
-| `apply` | Runs only when: OPA gate passes **and** either a push to `main` with plan changes (`exitcode=2`), or a manual `apply` dispatch. Uses the saved plan — no re-plan at apply time. |
-| `destroy` | Manual dispatch only. Runs in the `dev-destroy` GitHub Environment. Add required reviewers to this environment to prevent accidental teardown. |
+| `plan` | Environment `dev-plan`. Authenticates to AWS via OIDC. `terraform init` against the S3 backend (`BUCKET_TF_STATE`). `terraform plan -out=tfplan -detailed-exitcode` (0 = no changes, 2 = changes present, 1 = error). Exports the plan as JSON (`terraform show -json`), uploads artifact `terraform-plan-<run_id>` containing `tfplan` + `tf-plan.json` + `tf-plan.txt`. |
+| `opa-gate` | Only runs when `plan_exitcode == '2'`. Downloads the plan artifact, installs the OPA CLI, runs `opa eval` against `security.rego`, `networking.rego`, and `compliance.rego` — both `deny` and `warn` rules. Total `deny` count > 0 fails the job (blocking apply); `warn` is logged only. |
+| `apply` | `needs: [plan, opa-gate]`. Environment `dev-apply`. Runs when `opa-gate` succeeds, `plan_exitcode == '2'`, and `workflow_dispatch action=apply`. Applies the exact `tfplan` file already reviewed by OPA (no re-plan). Afterward collects `terraform output -json`, renders AWS Load Balancer Controller values via `Render-LbcValues.ps1`, and commits `values.rendered.yaml` as `github-actions[bot]` (message `[skip ci]`). |
+| `notify-apply` | `needs: apply`, `if: always() && needs.apply.result != 'skipped'` — notifies Slack with the apply result. |
+| `destroy` | Environment `dev-destroy`. Runs only when `workflow_dispatch action=destroy`. `terraform destroy -auto-approve`. |
+| `notify-destroy` | `needs: destroy` — notifies Slack (`warning` on success, `danger` on failure). |
 
-**OPA gate summary:**
-
-| Policy | `deny` result | `warn` result |
-|---|---|---|
-| `security.rego` | Blocks apply | Logged only |
-| `networking.rego` | Blocks apply | Logged only |
-| `compliance.rego` | Blocks apply | Logged only |
-
-**Concurrency:** `cancel-in-progress: false` — concurrent runs for the same environment are queued, not cancelled, to prevent Terraform state corruption.
-
-**Required secrets:** `AWS_DEV_ROLE_ARN`, `BUCKET_TF_STATE`, `TF_VAR_DB_PASSWORD`, `GITOPS_REPO_URL`, `SLACK_WEBHOOK_URL`
+**Required secrets:** `AWS_DEV_ROLE_ARN`, `BUCKET_TF_STATE`, `GITOPS_REPO_URL`, `SLACK_WEBHOOK_URL`
 
 ---
 
 ### check-scan.yaml
 
-**Trigger:** Scheduled cron (nightly). Also dispatchable manually via `workflow_dispatch`.
+**Trigger:** `workflow_dispatch` only, with input `scan_type` (`all`/`opa-only`/`tfsec-only`).
 
-**Purpose:** Continuous, change-independent security scanning. Catches newly published CVEs, policy coverage drift, and misconfigurations that emerge between commits — scenarios that PR-triggered CI cannot detect.
+**Purpose:** A deeper security/compliance scan than `terraform-ci` — generates a fresh plan JSON from remote state, runs OPA against all three policies, runs tfsec with the full ruleset, writes a Step Summary, and notifies Slack.
 
 **Job flow:**
 
 ```text
-opa-full-scan ─┐
-tfsec-deep     ├──► scan-summary → SARIF upload + Slack
-               ┘
+opa-full-scan ──┐
+tfsec-deep    ──┴──► generate-reports → Step Summary + Slack
 ```
 
 | Job | Description |
 |---|---|
-| `opa-full-scan` | Evaluates all three OPA policies against the latest plan JSON. Reports all `deny` and `warn` violations with full detail. |
-| `tfsec-deep` | Runs tfsec with the extended ruleset, including rules intentionally suppressed in `terraform-ci.yaml` to reduce developer feedback noise. |
-| `scan-summary` | Uploads SARIF to the GitHub Security tab. Sends a Slack notification with violation counts. |
+| `opa-full-scan` | Authenticates to AWS via OIDC, `terraform init` (S3 backend), `terraform plan -out=tfplan` (using the `TF_VAR_db_password` and `TF_VAR_gitops_repo_url` variables), exports JSON. Installs OPA, runs `deny` and `warn` for all three policies (`security`, `networking`, `compliance`). Merges the results into `opa-results.json` (artifact `opa-full-report`, retained 30 days). Fails the job if total `deny` > 0. |
+| `tfsec-deep` | Installs tfsec via direct binary download, scans with the full ruleset (`json` + `lovely`), tallies total/CRITICAL/HIGH counts, artifact `tfsec-deep-report` (retained 30 days), does not block the job. |
+| `generate-reports` | `needs: [opa-full-scan, tfsec-deep]`, `if: always()`. Writes the Step Summary (OPA table per policy, tfsec table per severity, job results table), notifies Slack. |
 
-**Required secrets:** `AWS_DEV_ROLE_ARN`, `BUCKET_TF_STATE`, `SLACK_WEBHOOK_URL`
+**Required secrets:** `AWS_DEV_ROLE_ARN`, `BUCKET_TF_STATE`, `TF_VAR_DB_PASSWORD`, `GITOPS_REPO_URL`, `SLACK_WEBHOOK_URL`
 
 ---
 
 ### app-ci.yaml
 
-**Trigger:** Push to `develop` / `feature/**` or PR to `develop` — paths `platform/gitops/**`, `platform/security/**`, `microservices-application/**`
+**Trigger:** `workflow_dispatch` only (no inputs).
 
-**Purpose:** Validates GitOps manifests, Kubernetes admission policies, Falco rules, and application source code before any image build or cluster deployment occurs.
+**Purpose:** Application CI — triggered by changes to GitOps manifests or application source code.
 
 **Job flow:**
 
 ```text
-gitleaks (hard gate)
-    ├──► kustomize-validate
-    ├──► opa-k8s-policies
-    ├──► falco-validate
-    └──► trivy-filesystem
-              │
-              └──► app-ci-summary → PR comment + Slack
+gitleaks ──► kustomize-validate ─┐
+         ├──► opa-k8s-policies    ├──► app-ci-summary
+         ├──► falco-validate      │
+         └──► trivy-filesystem   ─┘
 ```
 
-| Job | Tool | Scope |
-|---|---|---|
-| `gitleaks` | Gitleaks | Secret scanning across full git history. **Hard gate** — all downstream jobs declare `needs: gitleaks`. A single detected secret stops the entire pipeline. |
-| `kustomize-validate` | Kustomize + kubeconform | Builds all dev overlays with `kustomize build` and validates the rendered output against Kubernetes `1.33.0` schema using `--strict --ignore-missing-schemas`. |
-| `opa-k8s-policies` | OPA | Runs unit tests for Kubernetes admission policies in `platform/security/opa/`. Also validates `.rego` syntax with `opa check`. |
-| `falco-validate` | Falco | Validates Falco rule files in `platform/security/falco/`. Uses native Falco binary with an automatic Docker fallback if native installation fails in the runner environment. |
-| `trivy-filesystem` | Trivy | Filesystem CVE scan of source code before any image build. Non-blocking (`exit-code: 0`) — findings are reported to the Security tab but do not fail the workflow. |
-| `app-ci-summary` | — | Posts a results table as a PR comment. Notifies Slack. |
+| Job | Description |
+|---|---|
+| `gitleaks` | Checks out full history (`fetch-depth: 0`), runs `gitleaks/gitleaks-action@v2`. Uploads SARIF (`results.sarif`) as artifact `gitleaks-report` only on failure. |
+| `kustomize-validate` | `needs: gitleaks`. Installs `kustomize` + `kubeconform`. Builds 4 overlays (`platform-services`, `security`, `observability`, `applications/online-boutique` — skipped if the path doesn't exist) via `kustomize build --enable-helm`. Validates K8s schema with `kubeconform -strict -kubernetes-version 1.33.0`. Artifact `built-manifests`. |
+| `opa-k8s-policies` | `needs: gitleaks`. Installs OPA, runs `opa test platform/security/opa/` (skipped if the directory doesn't exist) and `opa check` against each `.rego` file. Artifact `opa-k8s-test-results`. |
+| `falco-validate` | `needs: gitleaks`. Installs Falco via APT, validates rules in `platform/security/falco/*.yaml|*.yml` with `falco --validate`; falls back to the `falcosecurity/falco:latest` Docker image if the native step fails. |
+| `trivy-filesystem` | `needs: gitleaks`. `aquasecurity/trivy-action` pinned to the immutable commit SHA `ed142fdcb1de6fa9f3ba1550f1d92abfa9c81e51` (`v0.36.0`). Scans the filesystem, severity CRITICAL/HIGH, `exit-code: 0` (non-blocking). SARIF uploaded to the Security tab (category `Trivy-Filesystem-Scan`), artifact `trivy-fs-report`. |
+| `app-ci-summary` | `needs` all 5 jobs above, `if: always()`. Writes the Step Summary, comments on the PR (with a separate warning if gitleaks failed), notifies Slack. |
 
 **Required secrets:** `SLACK_WEBHOOK_URL`
 
@@ -221,51 +216,23 @@ gitleaks (hard gate)
 
 ### app-cd.yaml
 
-**Trigger:**
-- Automatic — push to `main` when files under `microservices-application/**` change
-- Manual — `workflow_dispatch` with optional `service` name override and `environment` choice
+**Trigger:** `workflow_dispatch` only, with inputs `service` (leave empty for auto-detect) and `environment` (`dev`).
 
-**Purpose:** Builds and scans service images, pushes to ECR, and commits updated Kustomize image tags to the GitOps repository. ArgoCD detects the manifest change and performs a rolling update on the cluster — no manual `kubectl` or Helm commands required.
+**Concurrency:** `group: app-cd-<ref>`, `cancel-in-progress: false`.
+
+**Purpose:** Build → Trivy image scan → push to ECR → update Kustomize → commit. **Partial update** design: each service in the matrix writes its own status file; `update-gitops` only bumps the image tag for services with `status=success` — one failing service does not block deployment of the others.
 
 **Job flow:**
 
 ```text
-detect-changes
-    └──► build-and-scan  (matrix — one parallel job per changed service)
-              │
-              ├── docker build
-              ├── trivy SARIF scan     → GitHub Security tab
-              ├── trivy table scan     → workflow log
-              ├── trivy JSON scan      → count CRITICAL CVEs
-              │     └── BLOCK push if CRITICAL count > 0
-              └── docker push (SHA tag + latest) → ECR
-                        │
-                        └──► update-gitops
-                                  │
-                                  ├── kustomize edit set image (per service)
-                                  ├── git commit + push to main
-                                  └── Slack notification
-                                            │
-                                            ▼
-                                  ArgoCD detects change → rolling update
+detect-changes ──► build-and-scan (matrix per service, fail-fast:false) ──► update-gitops
 ```
 
-**Trivy gate logic:**
-
-Trivy runs three times per service, in sequence:
-
-1. **SARIF scan** — always uploaded to the GitHub Security tab regardless of outcome.
-2. **Table scan** — printed to the workflow log in human-readable format.
-3. **JSON scan** — parsed to count `CRITICAL` CVEs with `ignore-unfixed: true`. If count > 0, the CVE list is printed and the job exits with code `1`, **blocking the ECR push**. `HIGH` findings are reported but do not block.
-
-**Image tagging strategy:**
-
-| Tag | Format | Purpose |
-|---|---|---|
-| SHA tag | `<7-char git short SHA>` | Immutable reference committed into `kustomization.yaml` — the tag ArgoCD deploys |
-| `latest` | Updated on every push | Convenience reference only — not used by ArgoCD or any automated process |
-
-**Concurrency:** `cancel-in-progress: false` — queued, never cancelled. Prevents race conditions on ECR pushes and concurrent GitOps commits.
+| Job | Description |
+|---|---|
+| `detect-changes` | If a `service` input is given, uses it directly. Otherwise: a 3-dot `git diff` between `HEAD^1...HEAD` (falls back to `git diff HEAD`) under `microservices-application/`, extracting service names from the path. Outputs `services`, `has_changes`, `short_sha`. |
+| `build-and-scan` | Matrix per service, `fail-fast: false`. OIDC auth + ECR login. Image name `<ECR_REGISTRY>/eks-devsecops-dev-<service>:<short_sha>` (plus a `latest` tag). No `Dockerfile` → skipped. Builds the image (labeled with `git.sha`/`git.ref`/`build.timestamp`). Scans the image with Trivy (same pinned SHA `ed142fdcb1de6fa9f3ba1550f1d92abfa9c81e51`/`v0.36.0`), JSON is the single source of truth → converted to SARIF. **Blocks the push if any CRITICAL CVE is found**. If it passes: pushes both tags to ECR, uploads SARIF to the Security tab (category `Trivy-Image-<service>`), uploads the Trivy report artifact. Always writes a final status (`success`/`blocked_critical_cve`/`skipped_no_dockerfile`/`failed`) as artifact `status-<service>`. |
+| `update-gitops` | `needs: [detect-changes, build-and-scan]`, runs unless `build-and-scan` was `cancelled`. Downloads all `status-*` artifacts, filters services with `status=success`. Runs `kustomize edit set image` for each successful service against `KUSTOMIZE_OVERLAY_PATH`, commits as `github-actions[bot]` (using `GITOPS_BOT_TOKEN`), pushes to `main`. Notifies Slack (`warning` if any service was not updated, `good` if all succeeded). |
 
 **Required secrets:** `AWS_DEV_ROLE_ARN`, `AWS_ACCOUNT_ID`, `GITOPS_BOT_TOKEN`, `SLACK_WEBHOOK_URL`
 
@@ -273,75 +240,38 @@ Trivy runs three times per service, in sequence:
 
 ## OPA Policies
 
-All three policy files live under `platform/infrastructure/terraform/policies/` and are evaluated by the `opa-gate` job in `terraform-cd.yaml` against a `terraform show -json` plan output before any apply is permitted.
+Both `terraform-cd.yaml` (job `opa-gate`) and `check-scan.yaml` (job `opa-full-scan`) call these 3 files under `platform/infrastructure/terraform/policies/`, evaluated via `opa eval` with input being the `terraform show -json` output of the current plan:
 
-Each policy exposes two rule sets:
+- **`deny`** — violations that fail the job/pipeline (blocking `apply`). The `deny` count across all three policies is summed; > 0 means failure.
+- **`warn`** — logged to the run log/artifact only, never blocking.
 
-- **`deny`** — violations that block `terraform apply`. The `opa-gate` job sums deny counts across all three policies and fails if the total is greater than zero.
-- **`warn`** — findings printed to the workflow log and Slack. Non-blocking. Intended for issues that should be reviewed but do not require immediate remediation.
+`app-ci.yaml` (job `opa-k8s-policies`) uses OPA in a different way and is unrelated to these 3 files: it runs `opa test platform/security/opa/` (unit tests for Kubernetes admission policies) and `opa check` (syntax validation of `.rego` files).
+
+> The specific rule content inside each `.rego` file below is not present in the 5 workflow files provided — only the package name and the fact that they're invoked via `deny`/`warn` can be confirmed.
 
 ---
 
 ### security.rego
 
-**Package:** `data.terraform.security`
+**Package (confirmed from `opa eval` in terraform-cd.yaml / check-scan.yaml):** `data.terraform.security`
 
-Enforces security hardening for EKS, ECR, RDS, and IAM resources.
-
-| Rule | Severity | Description |
-|---|---|---|
-| EKS public endpoint unrestricted | `deny` | `endpoint_public_access = true` is only permitted when `public_access_cidrs` does not contain `0.0.0.0/0` |
-| EKS secrets encryption missing | `deny` | Cluster must define an `encryption_config` block covering the `secrets` resource type with a KMS key |
-| ECR scan on push disabled | `deny` | All ECR repositories must have `image_scanning_configuration.scan_on_push = true` |
-| ECR tag mutability mutable | `warn` | Repositories should use `image_tag_mutability = "IMMUTABLE"` to prevent tag overwriting |
-| RDS publicly accessible | `deny` | `publicly_accessible = true` is not permitted on any RDS instance |
-| RDS storage not encrypted | `deny` | `storage_encrypted = true` is required on all RDS instances |
-| RDS deletion protection off | `warn` | `deletion_protection = true` is recommended to guard against accidental instance deletion |
-| IAM wildcard action and resource | `deny` | Policies must not grant `Action: "*"` with `Resource: "*"` and `Effect: "Allow"` |
-| IAM wildcard resource | `warn` | `Resource: "*"` should be scoped to specific ARNs where possible |
+Evaluated via `data.terraform.security.deny` and `data.terraform.security.warn`. Specific rule content is not present in the provided workflow files.
 
 ---
 
 ### networking.rego
 
-**Package:** `data.terraform.networking`
+**Package (confirmed from `opa eval`):** `data.terraform.networking`
 
-Enforces network security boundaries for VPC, subnets, and Security Groups.
-
-| Rule | Severity | Description |
-|---|---|---|
-| Security Group allows all inbound | `deny` | No ingress rule may use protocol `-1` (all traffic) open to `0.0.0.0/0` or `::/0` |
-| SSH open to internet | `deny` | Port `22` must not be reachable from `0.0.0.0/0` or `::/0` on any Security Group |
-| EKS nodes in public subnet | `deny` | EKS managed node groups must reference private subnets only |
-| VPC flow logs disabled | `warn` | Every VPC should have an associated `aws_flow_log` resource for audit and incident response |
-| Public subnet auto-assign IP | `warn` | `map_public_ip_on_launch = true` is flagged for review to confirm the assignment is intentional |
+Evaluated via `data.terraform.networking.deny` and `data.terraform.networking.warn`. Specific rule content is not present in the provided workflow files.
 
 ---
 
 ### compliance.rego
 
-**Package:** `data.terraform.compliance`
+**Package (confirmed from `opa eval`):** `data.terraform.compliance`
 
-Enforces organizational tagging standards and encryption-at-rest requirements across all resource types.
-
-**Required tags** — all taggable resources (`aws_vpc`, `aws_subnet`, `aws_eks_cluster`, `aws_db_instance`, `aws_ecr_repository`, `aws_s3_bucket`, `aws_security_group`, `aws_iam_role`, etc.) must carry:
-
-| Tag key | Expected value | Severity if absent |
-|---|---|---|
-| `Project` | Any non-empty string | `deny` |
-| `Environment` | Any non-empty string (e.g. `dev`, `prod`) | `deny` |
-| `ManagedBy` | `terraform` | `deny` |
-| `Owner` | Any non-empty string | `warn` |
-
-**Encryption rules:**
-
-| Rule | Severity | Description |
-|---|---|---|
-| EBS volume not encrypted | `deny` | All `aws_ebs_volume` resources and EKS node group root volumes must have `encrypted = true` |
-| S3 bucket no server-side encryption | `deny` | Every S3 bucket must have an associated `aws_s3_bucket_server_side_encryption_configuration` |
-| RDS storage not encrypted | `deny` | `storage_encrypted = true` required — defence-in-depth alongside `security.rego` |
-| S3 versioning disabled | `warn` | S3 buckets should have versioning enabled — required for state bucket point-in-time recovery |
-| KMS key rotation disabled | `warn` | `enable_key_rotation = true` is recommended for all customer-managed KMS keys |
+Evaluated via `data.terraform.compliance.deny` and `data.terraform.compliance.warn`. Specific rule content is not present in the provided workflow files.
 
 ---
 
@@ -349,63 +279,15 @@ Enforces organizational tagging standards and encryption-at-rest requirements ac
 
 Navigate to: **Repository → Settings → Secrets and variables → Actions → New repository secret**
 
-| Secret | Required by | Description and how to obtain |
+| Secret | Required by | Notes |
 |---|---|---|
-| `AWS_DEV_ROLE_ARN` | `terraform-cd`, `app-cd`, `check-scan` | ARN of the IAM Role configured for GitHub OIDC federation. See [IAM OIDC Role](#iam-oidc-role) below. |
-| `BUCKET_TF_STATE` | `terraform-cd`, `check-scan` | Name of the S3 bucket used for Terraform remote state. Bucket name only — not the full ARN. Created during bootstrap. |
-| `TF_VAR_DB_PASSWORD` | `terraform-cd` | RDS master password. Minimum 8 characters. Must not contain `@`, `/`, or `"`. Never hardcode — always supply via this secret. |
-| `GITOPS_REPO_URL` | `terraform-cd` | Full HTTPS URL of this repository: `https://github.com/<org>/<repo>.git`. Passed to the ArgoCD bootstrap Terraform module as `gitops_repo_url`. |
-| `GITOPS_BOT_TOKEN` | `app-cd` | GitHub Personal Access Token (PAT) with **Contents: read/write** permission on this repository. Used by `update-gitops` to commit Kustomize image tag changes to `main`. Create at **Settings → Developer settings → Fine-grained personal access tokens**. |
-| `AWS_ACCOUNT_ID` | `app-cd` | 12-digit AWS account ID. Used to construct ECR repository URIs. Retrieve with: `aws sts get-caller-identity --query Account --output text` |
-| `SLACK_WEBHOOK_URL` | all workflows | Incoming Webhook URL for your Slack channel. Create at **api.slack.com/apps → Incoming Webhooks → Add New Webhook to Workspace**. |
-
-### IAM OIDC Role
-
-The role referenced by `AWS_DEV_ROLE_ARN` must trust GitHub's OIDC provider. Minimum trust policy:
-
-```json
-{
-  "Version": "2012-10-17",
-  "Statement": [
-    {
-      "Effect": "Allow",
-      "Principal": {
-        "Federated": "arn:aws:iam::041659741748:oidc-provider/token.actions.githubusercontent.com"
-      },
-      "Action": "sts:AssumeRoleWithWebIdentity",
-      "Condition": {
-        "StringEquals": {
-          "token.actions.githubusercontent.com:aud": "sts.amazonaws.com"
-        },
-        "StringLike": {
-          "token.actions.githubusercontent.com:sub": "repo:dinhtri6905/aws-eks-devsecops-platform:*"
-        }
-      }
-    }
-  ]
-}
-```
-
-For production, tighten `sub` to a specific environment to restrict assumption to the apply job only:
-
-```json
-"token.actions.githubusercontent.com:sub": "repo:<your-org>/<your-repo>:environment:dev-apply"
-```
-
-### Minimum IAM permissions
-
-For dev, attaching `AdministratorAccess` to the OIDC role is the fastest path to get started. For production, scope the role to the following:
-
-| Service | Minimum permissions |
-|---|---|
-| EKS | `eks:*` |
-| EC2 / VPC | `ec2:*` |
-| IAM | Create/update/delete roles, policies, instance profiles, OIDC providers |
-| ECR | `ecr:GetAuthorizationToken`, `ecr:*` on target repositories |
-| S3 | `s3:GetObject`, `s3:PutObject`, `s3:ListBucket` on the state bucket |
-| DynamoDB | `dynamodb:GetItem`, `dynamodb:PutItem`, `dynamodb:DeleteItem` on the lock table |
-| KMS | `kms:Decrypt`, `kms:GenerateDataKey` on the state encryption key |
-| RDS | `rds:*` |
+| `AWS_DEV_ROLE_ARN` | `terraform-cd`, `check-scan`, `app-cd` | ARN of the IAM Role configured for GitHub OIDC federation |
+| `BUCKET_TF_STATE` | `terraform-cd`, `check-scan` | Name of the S3 bucket used for Terraform remote state |
+| `TF_VAR_DB_PASSWORD` | `check-scan` | Passed into the Terraform variable `TF_VAR_db_password` when generating the plan |
+| `GITOPS_REPO_URL` | `terraform-cd` (`apply`, `destroy`), `check-scan` (`opa-full-scan`) | Passed into the Terraform variable `TF_VAR_gitops_repo_url` |
+| `GITOPS_BOT_TOKEN` | `app-cd` | GitHub PAT with **Contents: read/write**, used to checkout and commit/push Kustomize updates to `main` |
+| `AWS_ACCOUNT_ID` | `app-cd` | Used to build the ECR URI (`ECR_REGISTRY`) |
+| `SLACK_WEBHOOK_URL` | All 5 workflows | Incoming Webhook URL for Slack |
 
 ---
 
@@ -413,14 +295,12 @@ For dev, attaching `AdministratorAccess` to the OIDC role is the fastest path to
 
 Navigate to: **Repository → Settings → Environments → New environment**
 
-Environments add deployment protection rules — required reviewer approvals and branch restrictions — between pipeline jobs.
+Only `terraform-cd.yaml` declares an `environment:` at the job level:
 
-| Environment | Used by | Recommended protection |
+| Environment | Used by | Note from the file |
 |---|---|---|
-| `dev-plan` | `terraform-cd` → `plan` | None — runs automatically on every push |
-| `dev-apply` | `terraform-cd` → `apply` | Optional for dev. Add 1+ required reviewers when promoting to production. |
-| `dev-destroy` | `terraform-cd` → `destroy` | **Required reviewers (2+) mandatory.** Deployment branch restricted to `main` only. |
+| `dev-plan` | job `plan` | Assumed to already exist; create if missing |
+| `dev-apply` | job `apply` | Must be created manually before first use, or the job will queue indefinitely |
+| `dev-destroy` | job `destroy` | Must be created manually before first use; required reviewers are strongly recommended since this is a destructive action |
 
-To configure protection rules: open the environment → **Required reviewers** → add users or teams → **Deployment branches** → **Selected branches** → add `main`.
-
-> `dev-apply` may be left unprotected in a development environment where auto-apply on merge to `main` is the intended workflow. `dev-destroy` must always be protected — an unprotected destroy environment with `workflow_dispatch` access can result in complete infrastructure loss.
+`terraform-ci.yaml`, `check-scan.yaml`, `app-ci.yaml`, and `app-cd.yaml` do not declare an `environment:` on any job.
