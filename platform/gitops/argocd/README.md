@@ -18,10 +18,16 @@ and applies the Root Application automatically — no manual steps required afte
 - [Root Application](#root-application)
 - [AppProject](#appproject)
 - [Child Applications](#child-applications)
+  - [argocd-config](#argocd-config--wave-0)
   - [platform-services](#platform-services--wave-1)
-  - [security](#security--wave-2)
-  - [observability](#observability--wave-3)
-  - [online-boutique](#online-boutique--wave-4)
+  - [gatekeeper-install](#gatekeeper-install--wave-2)
+  - [observability-crds](#observability-crds--wave-3)
+  - [gatekeeper-templates](#gatekeeper-templates--wave-4)
+  - [falco](#falco--wave-4)
+  - [gatekeeper-policies](#gatekeeper-policies--wave-5)
+  - [network-policies](#network-policies--wave-5)
+  - [observability](#observability--wave-6)
+  - [online-boutique](#online-boutique--wave-7)
 - [Sync Wave Order](#sync-wave-order)
 - [Sync Options Explained](#sync-options-explained)
 - [ignoreDifferences Explained](#ignoredifferences-explained)
@@ -36,14 +42,22 @@ and applies the Root Application automatically — no manual steps required afte
 argocd/
 ├── root-app.yaml               # Entrypoint — applied automatically by Terraform argocd-bootstrap module
 │
+├── config/                     # ArgoCD's own RBAC/projects/notifications config
+│
 ├── projects/
 │   └── platform.yaml           # AppProject: RBAC, allowed repos, allowed namespaces
 │
-└── applications/               # Root App watches this directory
-    ├── platform-services.yaml  # Wave 1: Metrics Server + AWS Load Balancer Controller
-    ├── security.yaml           # Wave 2: OPA Gatekeeper + Falco
-    ├── observability.yaml      # Wave 3: kube-prometheus-stack
-    └── online-boutique.yaml    # Wave 4: Online Boutique microservices
+└── applications/                     # Root App watches this directory
+    ├── argocd-config.yaml            # Wave 0: ArgoCD's own configuration
+    ├── platform-services.yaml        # Wave 1: Metrics Server, AWS LBC, Argo Rollouts
+    ├── gatekeeper-install.yaml       # Wave 2: OPA Gatekeeper controller + CRDs
+    ├── observability-crds.yaml       # Wave 3: Prometheus Operator CRDs
+    ├── gatekeeper-templates.yaml     # Wave 4: Gatekeeper ConstraintTemplates
+    ├── falco.yaml                    # Wave 4: Falco DaemonSet
+    ├── gatekeeper-policies.yaml      # Wave 5: Gatekeeper Constraints (7 policies)
+    ├── network-policies.yaml         # Wave 5: NetworkPolicies
+    ├── observability.yaml            # Wave 6: kube-prometheus-stack
+    └── online-boutique.yaml          # Wave 7: Online Boutique microservices
 ```
 
 ---
@@ -61,23 +75,43 @@ terraform apply
             └── Applies Root Application (root-app.yaml)
                         │
                         │  root-app watches argocd/applications/
-                        │  and creates 4 child Applications
+                        │  and creates 10 child Applications
                         │
-                        ├── Wave 1 ── platform-services  →  kube-system
-                        │            Metrics Server, AWS Load Balancer Controller
+                        ├── Wave 0 ── argocd-config       →  argocd
+                        │            ArgoCD's own RBAC/projects/notifications config
+                        │
+                        ├── Wave 1 ── platform-services   →  kube-system
+                        │            Metrics Server, AWS Load Balancer Controller, Argo Rollouts
                         │            (ALB ready before Ingress resources are applied)
                         │
-                        ├── Wave 2 ── security           →  gatekeeper-system / falco
-                        │            OPA Gatekeeper (admission control)
+                        ├── Wave 2 ── gatekeeper-install  →  gatekeeper-system
+                        │            OPA Gatekeeper controller + CRDs
+                        │            (admission webhook active before later waves)
+                        │
+                        ├── Wave 3 ── observability-crds  →  monitoring
+                        │            Prometheus Operator CRDs
+                        │            (must exist before any ServiceMonitor/PrometheusRule)
+                        │
+                        ├── Wave 4 ── gatekeeper-templates →  gatekeeper-system
+                        │            ConstraintTemplates registered as CRDs
+                        │
+                        ├── Wave 4 ── falco               →  falco
                         │            Falco (runtime threat detection)
-                        │            (policies active before app workloads deploy)
+                        │            (syncs in parallel with gatekeeper-templates)
                         │
-                        ├── Wave 3 ── observability      →  monitoring
+                        ├── Wave 5 ── gatekeeper-policies →  gatekeeper-system
+                        │            Constraints activate the 7 policies
+                        │
+                        ├── Wave 5 ── network-policies    →  online-boutique
+                        │            NetworkPolicies
+                        │            (syncs in parallel with gatekeeper-policies)
+                        │
+                        ├── Wave 6 ── observability       →  monitoring
                         │            Prometheus, Grafana, Alertmanager
-                        │            (metrics scraped from wave 4 onward)
+                        │            (metrics scraped from wave 7 onward)
                         │
-                        └── Wave 4 ── online-boutique    →  online-boutique
-                                     13 microservices via Kustomize dev overlay
+                        └── Wave 7 ── online-boutique     →  online-boutique
+                                     11 microservices via Kustomize dev overlay
                                      frontend Ingress → LBC creates AWS ALB
 ```
 
@@ -105,7 +139,7 @@ kubectl get pods -n argocd
 # Verify Root App was applied
 kubectl get application root-app -n argocd
 
-# Watch all child Applications being created and synced
+# Watch all 10 child Applications being created and synced, in wave order
 kubectl get applications -n argocd -w
 
 # Port-forward the ArgoCD UI
@@ -134,9 +168,11 @@ syncPolicy:
     selfHeal: true    # reverts manual cluster changes back to Git state
 ```
 
-The Root App itself carries `sync-wave: "0"` — it runs before all child
-Applications. When ArgoCD processes `applications/`, it discovers the 4 child
-Application manifests and creates them, each with their own sync wave.
+The Root App itself runs before all child Applications. When ArgoCD processes
+`applications/`, it discovers the 10 child Application manifests and creates
+them, each with its own sync-wave annotation — 10 Applications across 8 waves
+(0–7); two waves (4 and 5) each hold a pair of Applications that don't depend
+on one another.
 
 **Retry policy:**
 ```
@@ -172,6 +208,25 @@ project's rules.
 
 ## Child Applications
 
+### argocd-config — Wave 0
+
+**File:** `applications/argocd-config.yaml`
+
+| Property | Value |
+|---|---|
+| Sync wave | `0` |
+| Source path | `platform/gitops/argocd/config` |
+| Destination namespace | `argocd` |
+| Deploys | ArgoCD's own RBAC, AppProjects, and notification configuration |
+
+**Why Wave 0 runs first:**
+
+This Application manages ArgoCD's own configuration, so it must sync before
+anything else — including before ArgoCD is asked to manage any other
+platform resource. It's the only Application ArgoCD applies to itself.
+
+---
+
 ### platform-services — Wave 1
 
 **File:** `applications/platform-services.yaml`
@@ -181,13 +236,15 @@ project's rules.
 | Sync wave | `1` |
 | Source path | `platform/gitops/kustomize/platform-services` |
 | Destination namespace | `kube-system` |
-| Deploys | Metrics Server, AWS Load Balancer Controller |
+| Deploys | Metrics Server, AWS Load Balancer Controller, Argo Rollouts |
 
-**Why Wave 1 runs first:**
+**Why Wave 1 runs early:**
 
 The AWS Load Balancer Controller must be running before any `Ingress` resource
 is applied. Without it, the `frontend` Ingress will stay in `Pending` indefinitely.
-Metrics Server must be ready before HPA in Wave 4 can function.
+Metrics Server must be ready before any HPA depends on it, and Argo Rollouts
+must be installed before the `online-boutique` Application (Wave 7) can create
+`Rollout` resources.
 
 **Dependency on Terraform:**
 The LBC requires an IRSA role ARN injected into its Helm values:
@@ -200,24 +257,24 @@ This must be filled before pushing to Git.
 
 ---
 
-### security — Wave 2
+### gatekeeper-install — Wave 2
 
-**File:** `applications/security.yaml`
+**File:** `applications/gatekeeper-install.yaml`
 
 | Property | Value |
 |---|---|
 | Sync wave | `2` |
-| Source path | `platform/gitops/kustomize/security` |
-| Destination namespace | `gatekeeper-system` / `falco` |
-| Deploys | OPA Gatekeeper, Falco |
+| Source path | `platform/gitops/kustomize/security/opa-gatekeeper/install` |
+| Destination namespace | `gatekeeper-system` |
+| Deploys | OPA Gatekeeper controller + CRDs |
 
-**Why Wave 2 runs before observability and applications:**
+**Why Wave 2 runs before ConstraintTemplates and observability CRDs:**
 
-OPA Gatekeeper installs a `ValidatingWebhookConfiguration` that intercepts all
-`CREATE`/`UPDATE` requests to the API server. If Gatekeeper is deployed after
-Online Boutique, pods would have been created without policy validation. By
-deploying security in Wave 2, every pod in Wave 3 and Wave 4 is validated at
-admission time.
+The Gatekeeper controller and its CRDs must exist before any
+`ConstraintTemplate` (Wave 4) or `Constraint` (Wave 5) resource can be applied.
+Splitting the controller install from the templates and policies avoids a
+race where a `ConstraintTemplate` is submitted before the CRD that defines it
+is registered.
 
 **`ignoreDifferences` configured for:**
 
@@ -238,21 +295,122 @@ to revert them.
 
 ---
 
-### observability — Wave 3
+### observability-crds — Wave 3
+
+**File:** `applications/observability-crds.yaml`
+
+| Property | Value |
+|---|---|
+| Sync wave | `3` |
+| Source path | `platform/gitops/kustomize/observability/crds` |
+| Destination namespace | `monitoring` |
+| Deploys | Prometheus Operator CRDs (`ServiceMonitor`, `PrometheusRule`, etc.) |
+
+**Why Wave 3 is separate from the observability stack itself:**
+
+The Prometheus Operator's own CRDs must be registered before the Helm release
+in Wave 6 can create any `ServiceMonitor` or `PrometheusRule` resource.
+Splitting CRDs into their own wave also lets other Applications (like
+`gatekeeper-templates` and `falco` at Wave 4) proceed without waiting on the
+full monitoring stack to be healthy.
+
+---
+
+### gatekeeper-templates — Wave 4
+
+**File:** `applications/gatekeeper-templates.yaml`
+
+| Property | Value |
+|---|---|
+| Sync wave | `4` |
+| Source path | `platform/gitops/kustomize/security/opa-gatekeeper/install/templates` |
+| Destination namespace | `gatekeeper-system` |
+| Deploys | Gatekeeper ConstraintTemplates |
+
+**Why Wave 4, after gatekeeper-install:**
+
+ConstraintTemplates register custom policy types as CRDs, so the Gatekeeper
+controller (Wave 2) must already be running. This Application syncs in
+parallel with `falco`, since the two share no dependency on each other —
+only on their respective prerequisite waves.
+
+---
+
+### falco — Wave 4
+
+**File:** `applications/falco.yaml`
+
+| Property | Value |
+|---|---|
+| Sync wave | `4` |
+| Source path | `platform/gitops/kustomize/security/falco` |
+| Destination namespace | `falco` |
+| Deploys | Falco (runtime threat detection) |
+
+**Why Wave 4, alongside gatekeeper-templates:**
+
+Falco has no dependency on Gatekeeper or vice versa — both just need
+`platform-services` (Wave 1) to be healthy. Placing them in the same wave
+lets them sync concurrently instead of serializing unrelated work.
+
+---
+
+### gatekeeper-policies — Wave 5
+
+**File:** `applications/gatekeeper-policies.yaml`
+
+| Property | Value |
+|---|---|
+| Sync wave | `5` |
+| Source path | `platform/gitops/kustomize/security/opa-gatekeeper/policies` |
+| Destination namespace | `gatekeeper-system` |
+| Deploys | Gatekeeper Constraints (7 policies) |
+
+**Why Wave 5 runs after gatekeeper-templates:**
+
+A `Constraint` instantiates a `ConstraintTemplate`, so the templates from
+Wave 4 must already be registered as CRDs before any Constraint can be
+created. Once this wave completes, every pod in later waves — including
+`online-boutique` in Wave 7 — is validated at admission time against all
+7 policies.
+
+---
+
+### network-policies — Wave 5
+
+**File:** `applications/network-policies.yaml`
+
+| Property | Value |
+|---|---|
+| Sync wave | `5` |
+| Source path | `platform/gitops/kustomize/security/network-policies` |
+| Destination namespace | `online-boutique` |
+| Deploys | NetworkPolicies for the `online-boutique` namespace |
+
+**Why Wave 5, alongside gatekeeper-policies:**
+
+NetworkPolicies don't depend on Gatekeeper Constraints or vice versa, so the
+two Applications sync in parallel. Both simply need the namespace and prior
+waves' controllers to already be healthy.
+
+---
+
+### observability — Wave 6
 
 **File:** `applications/observability.yaml`
 
 | Property | Value |
 |---|---|
-| Sync wave | `3` |
+| Sync wave | `6` |
 | Source path | `platform/gitops/kustomize/observability/kube-prometheus-stack` |
 | Destination namespace | `monitoring` |
 | Deploys | Prometheus, Grafana, Alertmanager, Node Exporter, kube-state-metrics |
 
-**Why Wave 3 runs after security:**
+**Why Wave 6 runs after security and CRDs:**
 
-Gatekeeper policies (Wave 2) must be active so the Prometheus and Grafana pods
-are validated against the same security constraints as all other workloads.
+The Prometheus Operator CRDs (Wave 3) must already exist, and Gatekeeper
+policies (Wave 5) must be active so the Prometheus and Grafana pods are
+validated against the same security constraints as all other workloads.
 
 **`ServerSideApply: true`** is required because Prometheus Operator CRDs are
 large and exceed the annotation size limit of client-side apply.
@@ -274,23 +432,24 @@ reconciliation loop due to fields mutated by the Prometheus Operator.
 
 ---
 
-### online-boutique — Wave 4
+### online-boutique — Wave 7
 
 **File:** `applications/online-boutique.yaml`
 
 | Property | Value |
 |---|---|
-| Sync wave | `4` |
+| Sync wave | `7` |
 | Source path | `platform/gitops/kustomize/overlays/dev` |
 | Destination namespace | `online-boutique` |
-| Deploys | 13 microservices via Kustomize dev overlay |
+| Deploys | 11 microservices via Kustomize dev overlay |
 
-**Why Wave 4 is last:**
+**Why Wave 7 is last:**
 
 All platform tools must be healthy before application workloads deploy:
 - AWS LBC (Wave 1) must exist to handle the `frontend` Ingress → AWS ALB
-- OPA Gatekeeper (Wave 2) must be enforcing policies before pods are admitted
-- Prometheus (Wave 3) ServiceMonitors must exist to start scraping from day one
+- OPA Gatekeeper Constraints (Wave 5) must be enforcing policies before pods are admitted
+- NetworkPolicies (Wave 5) must already be applied to the namespace
+- Prometheus (Wave 6) ServiceMonitors must exist to start scraping from day one
 
 **`PrunePropagationPolicy: foreground`** ensures that when a service is removed
 from the Kustomize overlay, its pods are fully terminated before ArgoCD marks
@@ -301,23 +460,35 @@ the sync as complete — prevents ghost endpoints in the ALB target group.
 ## Sync Wave Order
 
 ```
-Wave 0   root-app           discovers and creates child Applications
+Wave 0   argocd-config          ArgoCD's own RBAC/projects/notifications config applied
   │
-Wave 1   platform-services  Metrics Server + AWS LBC running and healthy
+Wave 1   platform-services      Metrics Server, AWS LBC, Argo Rollouts running and healthy
   │      └── prerequisite: LBC_ROLE_ARN in Helm values (from terraform output)
   │
-Wave 2   security           Gatekeeper webhook active, Falco eBPF probes loaded
-  │      └── all subsequent pods are admission-validated and runtime-monitored
+Wave 2   gatekeeper-install     Gatekeeper controller + CRDs, admission webhook active
   │
-Wave 3   observability      Prometheus scraping, Grafana dashboards live
-  │      └── ServiceMonitors pick up online-boutique pods from Wave 4 onward
+Wave 3   observability-crds     Prometheus Operator CRDs registered
+  │      └── required before any ServiceMonitor/PrometheusRule exists
   │
-Wave 4   online-boutique    13 microservices deployed, ALB provisioned by LBC
+Wave 4   gatekeeper-templates   ConstraintTemplates registered as CRDs
+Wave 4   falco                  Falco eBPF probes loaded, 10 custom rules active
+  │      └── these two Applications sync in parallel — neither depends on the other
+  │
+Wave 5   gatekeeper-policies    Constraints activated — pods now validated against 7 policies
+Wave 5   network-policies       NetworkPolicies applied in `online-boutique`
+  │      └── these two Applications also sync in parallel
+  │
+Wave 6   observability          Prometheus scraping, Grafana dashboards live
+  │      └── ServiceMonitors pick up online-boutique pods from Wave 7 onward
+  │
+Wave 7   online-boutique        11 microservices deployed, ALB provisioned by LBC
          └── loadgenerator initContainer waits for frontend to be Ready
 ```
 
 ArgoCD will not start a wave until all Applications in the previous wave reach
-`Healthy` status. If any wave fails, later waves do not run.
+`Healthy` status. Applications that share a wave number (4 and 5, above) sync
+concurrently with each other, but still wait on the wave before them. If any
+wave fails, later waves do not run.
 
 ---
 
@@ -329,9 +500,9 @@ All Applications share these `syncOptions`:
 |---|---|
 | `CreateNamespace=true` | ArgoCD creates the destination namespace if it does not exist |
 | `ApplyOutOfSyncOnly=true` | Only applies resources that are actually out of sync — reduces API server load and speeds up sync |
-| `ServerSideApply=true` | Used on `security` and `observability` — required for large CRDs that exceed client-side apply annotation limits |
-| `PrunePropagationPolicy=foreground` | Used on `platform-services` and `online-boutique` — waits for dependent resources to be deleted before marking prune complete |
-| `RespectIgnoreDifferences=true` | Used on `security` — respects `ignoreDifferences` during sync, not just during health checks |
+| `ServerSideApply=true` | Used on all 10 Applications — required for large CRDs (Gatekeeper, Prometheus Operator) that exceed client-side apply annotation limits |
+| `PrunePropagationPolicy=foreground` | Used on `platform-services`, `network-policies`, `observability-crds`, `observability`, and `online-boutique` — waits for dependent resources to be deleted before marking prune complete |
+| `RespectIgnoreDifferences=true` | Used on `gatekeeper-install` — respects `ignoreDifferences` during sync, not just during health checks |
 
 ---
 
@@ -343,8 +514,8 @@ these Applications as `OutOfSync`.
 
 | Application | Resource | Field | Why it changes at runtime |
 |---|---|---|---|
-| `security` | `ValidatingWebhookConfiguration` | `/webhooks/*/clientConfig/caBundle` | Gatekeeper injects CA bundle at startup |
-| `security` | `MutatingWebhookConfiguration` | `/webhooks/0/clientConfig/caBundle` | Same as above |
+| `gatekeeper-install` | `ValidatingWebhookConfiguration` | `/webhooks/*/clientConfig/caBundle` | Gatekeeper injects CA bundle at startup |
+| `gatekeeper-install` | `MutatingWebhookConfiguration` | `/webhooks/0/clientConfig/caBundle` | Same as above |
 | `observability` | `StatefulSet` | `/spec/volumeClaimTemplates` | Prometheus Operator patches VCT spec |
 | `observability` | `ServiceMonitor` | `/spec/endpoints` | Prometheus Operator normalises endpoint fields |
 
@@ -374,8 +545,12 @@ kubectl get pods -n argocd
 # Verify Root App was applied
 kubectl get application root-app -n argocd
 
-# Watch all Applications and their sync status
+# Watch all 10 Applications and their sync status, in wave order
 kubectl get applications -n argocd -w
+
+# List sync-wave annotation for every Application (should read 0,1,2,3,4,4,5,5,6,7)
+kubectl get applications -n argocd \
+  -o jsonpath='{range .items[*]}{.metadata.name}{"\t"}{.metadata.annotations.argocd\.argoproj\.io/sync-wave}{"\n"}{end}'
 
 # Port-forward ArgoCD UI
 kubectl port-forward svc/argocd-server -n argocd 8080:443
@@ -386,8 +561,14 @@ argocd app get online-boutique
 
 # Manually trigger a sync (skips the 3-minute poll interval)
 argocd app sync root-app
+argocd app sync argocd-config
 argocd app sync platform-services
-argocd app sync security
+argocd app sync gatekeeper-install
+argocd app sync observability-crds
+argocd app sync gatekeeper-templates
+argocd app sync falco
+argocd app sync gatekeeper-policies
+argocd app sync network-policies
 argocd app sync observability
 argocd app sync online-boutique
 
