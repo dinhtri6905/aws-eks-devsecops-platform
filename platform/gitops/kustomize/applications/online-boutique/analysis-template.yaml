@@ -1,0 +1,30 @@
+# ============================================================
+# success-rate-check
+# AnalysisTemplate dùng chung cho các Rollout Blue/Green
+# (frontend, checkoutservice, cartservice).
+#
+# Query Prometheus (kube-prometheus-stack, namespace monitoring)
+# để kiểm tra tỉ lệ lỗi 5xx của service vừa deploy (green/preview).
+# Nếu error rate >= 1% ở 2/5 lần kiểm tra liên tiếp trong 1 phút
+# -> Rollout tự abort, blue tiếp tục nhận traffic.
+# ============================================================
+apiVersion: argoproj.io/v1alpha1
+kind: AnalysisTemplate
+metadata:
+  name: success-rate-check
+spec:
+  args:
+    - name: service-name
+  metrics:
+    - name: error-rate
+      interval: 1m
+      count: 5
+      successCondition: result[0] < 0.01
+      failureLimit: 2
+      provider:
+        prometheus:
+          address: http://kube-prometheus-stack-prometheus.monitoring:9090
+          query: |
+            sum(rate(http_requests_total{service="{{args.service-name}}",code=~"5.."}[2m]))
+            /
+            sum(rate(http_requests_total{service="{{args.service-name}}"}[2m]))
