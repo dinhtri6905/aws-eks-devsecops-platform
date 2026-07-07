@@ -1,0 +1,38 @@
+# ============================================================
+# argo-rollouts
+# Cài đặt Argo Rollouts controller (namespace + controller + CRDs)
+# qua GitOps để làm nền tảng cho Blue/Green deployment của
+# frontend, checkoutservice, cartservice trong online-boutique.
+# ============================================================
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: argo-rollouts
+
+helmCharts:
+  - name: argo-rollouts
+    repo: https://argoproj.github.io/argo-helm
+    version: 2.41.0
+    releaseName: argo-rollouts
+    namespace: argo-rollouts
+    valuesInline:
+      installCRDs: true
+      controller:
+        replicas: 1
+        resources:
+          requests:
+            cpu: 50m
+            memory: 64Mi
+          limits:
+            cpu: 200m
+            memory: 256Mi
+        podSecurityContext:
+          runAsNonRoot: true
+          runAsUser: 1000
+        containerSecurityContext:
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: true
+          capabilities:
+            drop: [ALL]
+      dashboard:
+        enabled: false
