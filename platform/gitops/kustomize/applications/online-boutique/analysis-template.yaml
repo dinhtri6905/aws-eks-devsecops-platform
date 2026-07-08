@@ -1,13 +1,13 @@
 # ============================================================
 # success-rate-check
-# AnalysisTemplate dùng chung cho các Rollout Blue/Green
+# Shared AnalysisTemplate for Blue/Green rollouts.
 # (frontend, checkoutservice, cartservice).
-#
-# Query Prometheus (kube-prometheus-stack, namespace monitoring)
-# để kiểm tra tỉ lệ lỗi 5xx của service vừa deploy (green/preview).
-# Nếu error rate >= 1% ở 2/5 lần kiểm tra liên tiếp trong 1 phút
-# -> Rollout tự abort, blue tiếp tục nhận traffic.
-# ============================================================
+
+# Shared AnalysisTemplate for Blue/Green rollouts.
+# Uses kube-state-metrics to verify that containers in the new
+# ReplicaSet have zero restarts during analysis. Any restart
+# causes the rollout to fail and abort, keeping traffic on the
+# stable version.
 apiVersion: argoproj.io/v1alpha1
 kind: AnalysisTemplate
 metadata:
@@ -15,16 +15,22 @@ metadata:
 spec:
   args:
     - name: service-name
+    - name: pod-template-hash
   metrics:
-    - name: error-rate
+    - name: restart-count
       interval: 1m
       count: 5
-      successCondition: result[0] < 0.01
+      # Pass only if all containers in the new rollout pods have
+      # zero restarts during the analysis period.
+      successCondition: result[0] == 0
       failureLimit: 2
       provider:
         prometheus:
           address: http://kube-prometheus-stack-prometheus.monitoring:9090
           query: |
-            sum(rate(http_requests_total{service="{{args.service-name}}",code=~"5.."}[2m]))
-            /
-            sum(rate(http_requests_total{service="{{args.service-name}}"}[2m]))
+            sum(
+              kube_pod_container_status_restarts_total{
+                namespace="online-boutique",
+                pod=~"{{args.service-name}}-{{args.pod-template-hash}}-.*"
+              }
+            )
