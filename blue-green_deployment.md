@@ -4,6 +4,8 @@ Tài liệu này mô tả **quy trình thực tế cần thực hiện** để t
 
 Nguyên tắc xuyên suốt: **mọi thứ đi qua Git**, không ai `kubectl apply` tay ngoài các lệnh vận hành Rollout (promote/abort/undo) — bản thân các lệnh đó cũng chỉ thao tác trên resource đã được ArgoCD tạo ra từ Git.
 
+> **Đã xác minh trên source code thật (Bước 0–2 đã triển khai):** app Online Boutique gốc (`GoogleCloudPlatform/microservices-demo`, image `gcr.io/google-samples/microservices-demo`) **không** tự expose Prometheus HTTP metrics (`src/frontend` không có route `/metrics`, không import `prometheus/client_golang`). Vì vậy tài liệu này **không dùng** `http_requests_total`/error-rate làm điều kiện Analysis như phiên bản thiết kế ban đầu — xem lý do và cách thay thế ở Bước 2.
+
 ---
 
 ## 1. Phạm vi áp dụng
@@ -20,23 +22,54 @@ Nguyên tắc xuyên suốt: **mọi thứ đi qua Git**, không ai `kubectl app
 
 ## 2. Việc cần làm — theo đúng thứ tự
 
-### Bước 0 — Cài Argo Rollouts controller qua GitOps (một lần, cấp platform)
+### Bước 0 — Cài Argo Rollouts controller qua GitOps (một lần, cấp platform) ✅ Đã triển khai
 
 Argo Rollouts **không** được cài bằng tay. Nó phải là một Application con trong App of Apps, giống cách `platform-services`, `observability`, `falco` đang được quản lý trong `argocd/applications/`.
 
-1. Thêm manifest cài đặt Argo Rollouts (namespace + controller + CRDs) vào `kustomize/platform-services/argo-rollouts/` (thư mục mới, cùng cấp với `aws-load-balancer-controller`, `metrics-server`).
-2. Thêm entry vào `kustomize/platform-services/kustomization.yaml`.
+1. Tạo `kustomize/platform-services/argo-rollouts/kustomization.yaml` (thư mục mới, cùng cấp với `aws-load-balancer-controller`, `metrics-server`). Cài đặt qua **Helm chart** (`helmCharts:` trong Kustomize), theo đúng pattern `metrics-server/` đang dùng — không viết tay `deployment.yaml`/`service.yaml`/CRD, Kustomize sẽ tự `helm template` chart ra toàn bộ manifest lúc build:
+   ```yaml
+   apiVersion: kustomize.config.k8s.io/v1beta1
+   kind: Kustomization
+   namespace: argo-rollouts
+   helmCharts:
+     - name: argo-rollouts
+       repo: https://argoproj.github.io/argo-helm
+       version: 2.41.0
+       releaseName: argo-rollouts
+       namespace: argo-rollouts
+       valuesInline:
+         installCRDs: true
+         controller:
+           replicas: 1
+           resources:
+             requests: { cpu: 50m, memory: 64Mi }
+             limits: { cpu: 200m, memory: 256Mi }
+           podSecurityContext:
+             runAsNonRoot: true
+             runAsUser: 1000
+           containerSecurityContext:
+             allowPrivilegeEscalation: false
+             readOnlyRootFilesystem: true
+             capabilities: { drop: [ALL] }
+         dashboard:
+           enabled: false
+   ```
+   `installCRDs: true` cài luôn CRD `Rollout`, `AnalysisTemplate`, `AnalysisRun`, `Experiment` cùng lúc với controller. `podSecurityContext`/`containerSecurityContext` non-root, read-only rootfs để không bị Gatekeeper (`require-non-root`, `require-read-only-root-filesystem`) chặn.
+2. Thêm entry `argo-rollouts/` vào `kustomize/platform-services/kustomization.yaml` (`resources:`).
 3. Application `platform-services.yaml` trong `argocd/applications/` đã trỏ tới thư mục `platform-services` này — không cần tạo Application mới, chỉ cần commit thư mục Argo Rollouts vào đúng chỗ và để ArgoCD tự sync theo sync-wave hiện có.
-4. Xác nhận qua `kubectl get pods -n argo-rollouts` sau khi ArgoCD sync xong.
+4. Xác nhận qua `kubectl get pods -n argo-rollouts` và `kubectl get crd | grep argoproj.io` sau khi ArgoCD sync xong.
 
-### Bước 1 — Đăng ký sức khỏe của `Rollout` với ArgoCD
+### Bước 1 — Đăng ký sức khỏe của `Rollout` với ArgoCD ✅ Đã triển khai
 
 Vì `Rollout` là CRD của Argo Rollouts, ArgoCD mặc định không biết cách đánh giá "Healthy/Progressing/Degraded" cho nó — Application sẽ báo `Healthy` ngay cả khi rollout đang giữa chừng nếu không cấu hình.
 
-- Thêm đoạn `resource.customizations.health.argoproj.io_Rollout` (Lua script) vào `argocd/config/argocd-cm-patch.yaml` — đây là ConfigMap `argocd-cm` đã tồn tại, được đồng bộ bởi Application `argocd-config` (sync-wave `"0"`, chạy sớm nhất). Chỉ cần thêm key mới vào `data`, không tạo file/Application mới.
+- Thêm key `resource.customizations.health.argoproj.io_Rollout` (Lua script) vào `data:` **đã có sẵn** trong `argocd/config/argocd-cm-patch.yaml` — đây là ConfigMap `argocd-cm`, được đồng bộ bởi Application `argocd-config` (sync-wave `"0"`, chạy sớm nhất). Chỉ thêm key mới cạnh key `ConstraintTemplate` hiện có, **không tạo file mới, không sửa `argocd/config/kustomization.yaml`** (đã include sẵn file này).
 
 ```yaml
 data:
+  resource.customizations.health.templates.gatekeeper.sh_ConstraintTemplate: |
+    # ... (giữ nguyên, đã có từ trước)
+
   resource.customizations.health.argoproj.io_Rollout: |
     hs = {}
     if obj.status ~= nil then
@@ -55,9 +88,13 @@ data:
     return hs
 ```
 
-### Bước 2 — Thêm `AnalysisTemplate` dùng chung
+### Bước 2 — Thêm `AnalysisTemplate` dùng chung ✅ Đã triển khai (đổi metric so với thiết kế ban đầu)
 
-Tạo file mới `kustomize/applications/online-boutique/analysis-template.yaml`, query Prometheus đã có sẵn (`kube-prometheus-stack` do Application `observability` triển khai):
+**Vì sao không dùng `http_requests_total`:** thiết kế ban đầu định query error-rate HTTP qua Prometheus. Đã xác minh trực tiếp trên `src/frontend` (Go) của Online Boutique gốc — không có route `/metrics`, không import `prometheus/client_golang`. `ServiceMonitor` trong `kustomize/observability/kube-prometheus-stack/servicemonitors/online-boutique.yaml` chỉ định nghĩa *nơi* Prometheus sẽ scrape (`/metrics` trên port `http`/`grpc`), không đảm bảo app *có* endpoint đó. Nếu giữ nguyên query cũ, kết quả luôn là "no data" → Argo Rollouts coi AnalysisRun là `Inconclusive` → **Rollout treo vĩnh viễn**, không bao giờ tự abort cũng không bao giờ tự promote được.
+
+**Thay thế bằng metric có thật, luôn tồn tại** từ `kube-state-metrics` (thành phần của `kube-prometheus-stack`, không phụ thuộc app phải tự instrument gì): đếm số lần container của pod thuộc **bản mới (green)** bị restart trong lúc phân tích. Nếu pod bản mới liên tục crash/OOMKilled/lỗi startup, Analysis fail và Rollout tự abort, blue tiếp tục nhận traffic.
+
+Tạo file mới `kustomize/applications/online-boutique/analysis-template.yaml`:
 
 ```yaml
 apiVersion: argoproj.io/v1alpha1
@@ -67,31 +104,37 @@ metadata:
 spec:
   args:
     - name: service-name
+    - name: pod-template-hash
   metrics:
-    - name: error-rate
+    - name: restart-count
       interval: 1m
       count: 5
-      successCondition: result[0] < 0.01
+      successCondition: result[0] == 0
       failureLimit: 2
       provider:
         prometheus:
           address: http://kube-prometheus-stack-prometheus.monitoring:9090
           query: |
-            sum(rate(http_requests_total{service="{{args.service-name}}",code=~"5.."}[2m]))
-            /
-            sum(rate(http_requests_total{service="{{args.service-name}}"}[2m]))
+            sum(
+              kube_pod_container_status_restarts_total{
+                namespace="online-boutique",
+                pod=~"{{args.service-name}}-{{args.pod-template-hash}}-.*"
+              }
+            )
 ```
+
+Tham số `pod-template-hash` là bắt buộc — đây là giá trị Argo Rollouts tự gắn vào label `rollouts-pod-template-hash` của ReplicaSet mới mỗi lần tạo bản green, dùng để lọc đúng pod của bản mới thay vì tính chung với pod bản cũ (blue). Cách Rollout truyền giá trị này vào Analysis được cấu hình ở Bước 3 (mục 4, `args` của `prePromotionAnalysis`/`postPromotionAnalysis`).
 
 Đăng ký file này vào `kustomize/applications/online-boutique/kustomization.yaml` (`resources:` gốc, không thuộc thư mục con nào — cùng cấp `adservice`, `cartservice`, ...).
 
-Nếu 5xx error rate ≥ 1% ở 2/5 lần kiểm tra, Rollout **tự abort** — blue tiếp tục nhận traffic, không cần con người can thiệp.
+> **Giới hạn cần biết:** cách này chỉ phát hiện lỗi kiểu crash/OOMKilled/startup failure, không phát hiện được lỗi kiểu "app chạy nhưng trả sai kết quả" hay "chậm nhưng không crash". Đây là đánh đổi hợp lý khi app chưa có custom metrics và không muốn sửa source code gốc. Nếu sau này tự thêm Prometheus client vào app, có thể nâng cấp Analysis dùng lại error-rate.
 
 ### Bước 3 — Chuyển 3 service từ `Deployment` sang `Rollout` (đúng cấu trúc thư mục hiện có)
 
 Với mỗi service trong `kustomize/applications/online-boutique/<service>/`:
 
 1. **Không xoá `deployment.yaml`** theo nghĩa mất pod spec — đổi `kind: Deployment` → `kind: Rollout`, `apiVersion: apps/v1` → `apiVersion: argoproj.io/v1alpha1`, giữ nguyên `spec.selector`, `spec.template` (containers, probes, securityContext...) như file gốc đã có. Nên đổi tên file thành `rollout.yaml` để phản ánh đúng kind, và cập nhật `kustomization.yaml` của service tương ứng.
-2. Thêm `spec.strategy.blueGreen` vào Rollout (chi tiết per-service ở mục 5).
+2. Thêm `spec.strategy.blueGreen` vào Rollout (chi tiết per-service ở mục 5), tham chiếu `templateName: success-rate-check` từ Bước 2 và truyền `pod-template-hash` qua `valueFrom.podTemplateHashValue: Latest` (Argo Rollouts tự điền).
 3. **Đổi `service.yaml` hiện tại** — mỗi service hiện chỉ có **một** Service (`frontend`, `cartservice`, `checkoutservice`). Cần thay bằng **hai** Service: `<service>-active` và `<service>-preview`, cùng selector `app: <service>` (Rollout controller sẽ tự patch label `rollouts-pod-template-hash` để phân biệt blue/green — không cần chỉnh selector thủ công).
 4. `frontend/ingress.yaml`: đổi `backend.service.name` từ `frontend` → `frontend-active`. Đây là **thay đổi duy nhất** liên quan tới ALB Ingress; AWS Load Balancer Controller không cần cấu hình gì thêm.
 5. `checkoutservice`, `cartservice` không có Ingress — các service gọi chúng qua biến môi trường (`CART_SERVICE_ADDR`, `CHECKOUT_SERVICE_ADDR` trong `frontend`/`checkoutservice` deployment) **phải trỏ sang `<service>-active`**, ví dụ `CART_SERVICE_ADDR=cartservice-active:7070`. Cập nhật trong `frontend/deployment.yaml` (đổi thành `Rollout`) và `checkoutservice/deployment.yaml` (đổi thành `Rollout`).
@@ -149,7 +192,7 @@ flowchart LR
     Git[Git: image tag mới] --> ArgoCD[ArgoCD sync]
     ArgoCD --> Rollout[Rollout controller]
     Rollout --> Green[ReplicaSet mới -- green]
-    Green -->|health checks pass| Analysis[AnalysisTemplate: Prometheus error-rate]
+    Green -->|health checks pass| Analysis[AnalysisTemplate: restart-count kube-state-metrics]
     Analysis -->|pass| Promote{Promote}
     Analysis -->|fail| Abort[Abort -- blue vẫn active]
     Promote -->|manual hoặc auto| Switch[active Service selector -> green]
@@ -159,7 +202,7 @@ flowchart LR
 
 Cutover xảy ra bằng cách Argo Rollouts patch selector của Service `active` — **không** đổi gì trên ALB/Ingress.
 
-- **`frontend`** dùng `postPromotionAnalysis` — kiểm tra traffic qua `preview` Service thủ công (port-forward), rồi Analysis xác nhận sức khỏe sau khi switch.
+- **`frontend`** dùng `postPromotionAnalysis` — kiểm tra traffic qua `preview` Service thủ công (port-forward), rồi Analysis xác nhận sức khỏe (không bị restart) sau khi switch.
 - **`checkoutservice`**, **`cartservice`** dùng `prePromotionAnalysis` — service gRPC nội bộ không có bước preview thủ công, nên Analysis phải pass trước khi được phép promote.
 
 ---
@@ -193,6 +236,9 @@ spec:
         args:
           - name: service-name
             value: frontend
+          - name: pod-template-hash
+            valueFrom:
+              podTemplateHashValue: Latest
   template: {}  # giữ nguyên metadata.labels + spec từ Deployment gốc (containers, probes, securityContext)
 ---
 apiVersion: v1
@@ -247,6 +293,9 @@ spec:
         args:
           - name: service-name
             value: checkoutservice
+          - name: pod-template-hash
+            valueFrom:
+              podTemplateHashValue: Latest
   template: {}  # giữ nguyên spec Deployment gốc; CART_SERVICE_ADDR -> cartservice-active:7070
 ---
 apiVersion: v1
@@ -299,6 +348,9 @@ spec:
         args:
           - name: service-name
             value: cartservice
+          - name: pod-template-hash
+            valueFrom:
+              podTemplateHashValue: Latest
   template: {}  # giữ nguyên spec Deployment gốc, gồm REDIS_ADDR=redis-cart:6379
 ---
 apiVersion: v1
@@ -364,7 +416,7 @@ Lưu ý GitOps: `kubectl argo rollouts undo` chỉ là rollback tức thời ở
 
 ## 7. Thông báo Slack
 
-Argo Rollouts có notification controller riêng, tách khỏi ArgoCD Notifications, dùng chung `SLACK_WEBHOOK_URL` đã cấu hình. Thêm ConfigMap này vào `kustomize/platform-services/argo-rollouts/` (namespace `argo-rollouts`), cùng chỗ với manifest cài đặt controller ở Bước 0:
+Argo Rollouts có notification controller riêng, tách khỏi ArgoCD Notifications, dùng chung `SLACK_WEBHOOK_URL` đã cấu hình. Thêm ConfigMap này vào `kustomize/platform-services/argo-rollouts/` (namespace `argo-rollouts`), cùng chỗ với manifest cài đặt controller ở Bước 0 (nếu cần patch thêm ngoài Helm values, thêm file riêng và khai `patches:` trong `kustomization.yaml`):
 
 ```yaml
 apiVersion: v1
@@ -385,10 +437,10 @@ data:
 
 ## 8. Checklist tổng hợp (PR review)
 
-- [ ] `kustomize/platform-services/argo-rollouts/` — controller + CRDs, đăng ký vào `platform-services/kustomization.yaml`
-- [ ] `argocd/config/argocd-cm-patch.yaml` — thêm health check Lua cho `Rollout`
-- [ ] `kustomize/applications/online-boutique/analysis-template.yaml` — AnalysisTemplate, đăng ký vào kustomization gốc
-- [ ] `frontend/`, `checkoutservice/`, `cartservice/`: `deployment.yaml` → `rollout.yaml` (kind `Rollout`, thêm `strategy.blueGreen`)
+- [x] `kustomize/platform-services/argo-rollouts/kustomization.yaml` — cài qua Helm chart (`argo-rollouts` v2.41.0), đăng ký vào `platform-services/kustomization.yaml`
+- [x] `argocd/config/argocd-cm-patch.yaml` — thêm health check Lua cho `Rollout` vào `data:` đã có sẵn
+- [x] `kustomize/applications/online-boutique/analysis-template.yaml` — AnalysisTemplate dùng `kube_pod_container_status_restarts_total` (không dùng `http_requests_total` — app không expose), đăng ký vào kustomization gốc
+- [ ] `frontend/`, `checkoutservice/`, `cartservice/`: `deployment.yaml` → `rollout.yaml` (kind `Rollout`, thêm `strategy.blueGreen`, `args.pod-template-hash` trong Analysis)
 - [ ] `frontend/`, `checkoutservice/`, `cartservice/`: `service.yaml` → hai Service `-active` / `-preview`
 - [ ] `frontend/ingress.yaml`: backend → `frontend-active`
 - [ ] `frontend`, `checkoutservice` deployment env: `CART_SERVICE_ADDR`, `CHECKOUT_SERVICE_ADDR` → trỏ `-active`
