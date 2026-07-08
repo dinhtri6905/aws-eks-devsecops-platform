@@ -40,7 +40,7 @@ spec:
       terminationGracePeriodSeconds: 5
       containers:
         - name: cartservice
-          image: gcr.io/google-samples/microservices-demo/cartservice:v0.10.0
+          image: gcr.io/google-samples/microservices-demo/cartservice:v0.10.1
           ports:
             - containerPort: 7070
               protocol: TCP
