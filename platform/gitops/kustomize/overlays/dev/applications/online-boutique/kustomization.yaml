@@ -37,6 +37,9 @@ patches:
       - op: add
         path: /spec/selector/matchLabels/environment
         value: dev
+      - op: add
+        path: /spec/template/metadata/labels/environment
+        value: dev
 
 # Generate/override ConfigMap for dev environment
 configMapGenerator:
