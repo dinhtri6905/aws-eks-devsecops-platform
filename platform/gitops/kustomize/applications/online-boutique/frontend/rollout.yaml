@@ -44,6 +44,7 @@ spec:
           image: gcr.io/google-samples/microservices-demo/frontend:v0.10.0
           ports:
             - containerPort: 8080
+              protocol: TCP
               name: http
           env:
             - name: PORT

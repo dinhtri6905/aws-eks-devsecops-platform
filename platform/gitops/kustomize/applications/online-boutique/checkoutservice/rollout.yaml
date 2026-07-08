@@ -42,6 +42,7 @@ spec:
           image: gcr.io/google-samples/microservices-demo/checkoutservice:v0.10.0
           ports:
             - containerPort: 5050
+              protocol: TCP
               name: grpc
           env:
             - name: PORT
