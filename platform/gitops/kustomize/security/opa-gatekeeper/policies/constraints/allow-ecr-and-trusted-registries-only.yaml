@@ -24,6 +24,7 @@ spec:
       # Trusted public registries used by platform add-ons
       - "registry.k8s.io/"
       - "quay.io/jetstack/"
+      - "quay.io/argoproj/"
       - "ghcr.io/falcosecurity/"
       - "gcr.io/google-samples/"
       - "docker.io/library/"
