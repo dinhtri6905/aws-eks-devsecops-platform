@@ -195,7 +195,7 @@ jobs:
         # supply-chain attack (75/76 version tags force-pushed to malicious
         # commits). Tags without a leading "v" (e.g. 0.28.0) were retired
         # and no longer resolve. Do not revert to a bare version tag.
-        uses: aquasecurity/trivy-action@ed142fdcb1de6fa9f3ba1550f1d92abfa9c81e51 # v0.36.0
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
           image-ref: ${{ steps.meta.outputs.full_image }}
           format: "json"
