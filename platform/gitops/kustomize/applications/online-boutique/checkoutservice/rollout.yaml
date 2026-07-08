@@ -10,6 +10,7 @@ spec:
   selector:
     matchLabels:
       app: checkoutservice
+      app.kubernetes.io/part-of: aws-eks-devsecops-platform
   strategy:
     blueGreen:
       activeService: checkoutservice-active
@@ -42,7 +43,6 @@ spec:
           image: gcr.io/google-samples/microservices-demo/checkoutservice:v0.10.0
           ports:
             - containerPort: 5050
-              protocol: TCP
               name: grpc
           env:
             - name: PORT

@@ -26,6 +26,17 @@ patches:
     target:
       kind: ConfigMap
       name: online-boutique-env
+  # commonLabels doesn't patch spec.selector.matchLabels on the
+  # Rollout CRD (Kustomize doesn't know its schema), so it drifts
+  # out of sync with the Service selectors. Add it manually here.
+  - target:
+      kind: Rollout
+      group: argoproj.io
+      version: v1alpha1
+    patch: |-
+      - op: add
+        path: /spec/selector/matchLabels/environment
+        value: dev
 
 # Generate/override ConfigMap for dev environment
 configMapGenerator:
