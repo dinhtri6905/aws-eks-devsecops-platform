@@ -1,5 +1,5 @@
-apiVersion: apps/v1
-kind: Deployment
+apiVersion: argoproj.io/v1alpha1
+kind: Rollout
 metadata:
   name: frontend
   labels:
@@ -10,6 +10,21 @@ spec:
   selector:
     matchLabels:
       app: frontend
+  strategy:
+    blueGreen:
+      activeService: frontend-active
+      previewService: frontend-preview
+      autoPromotionEnabled: false
+      scaleDownDelaySeconds: 300
+      postPromotionAnalysis:
+        templates:
+          - templateName: success-rate-check
+        args:
+          - name: service-name
+            value: frontend
+          - name: pod-template-hash
+            valueFrom:
+              podTemplateHashValue: Latest
   template:
     metadata:
       labels:
@@ -38,11 +53,11 @@ spec:
             - name: CURRENCY_SERVICE_ADDR
               value: "currencyservice:7000"
             - name: CART_SERVICE_ADDR
-              value: "cartservice:7070"
+              value: "cartservice-active:7070"
             - name: RECOMMENDATION_SERVICE_ADDR
               value: "recommendationservice:8080"
             - name: CHECKOUT_SERVICE_ADDR
-              value: "checkoutservice:5050"
+              value: "checkoutservice-active:5050"
             - name: SHIPPING_SERVICE_ADDR
               value: "shippingservice:50051"
             - name: AD_SERVICE_ADDR

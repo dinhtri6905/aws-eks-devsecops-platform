@@ -1,5 +1,5 @@
-apiVersion: apps/v1
-kind: Deployment
+apiVersion: argoproj.io/v1alpha1
+kind: Rollout
 metadata:
   name: cartservice
   labels:
@@ -10,6 +10,21 @@ spec:
   selector:
     matchLabels:
       app: cartservice
+  strategy:
+    blueGreen:
+      activeService: cartservice-active
+      previewService: cartservice-preview
+      autoPromotionEnabled: false
+      scaleDownDelaySeconds: 300
+      prePromotionAnalysis:
+        templates:
+          - templateName: success-rate-check
+        args:
+          - name: service-name
+            value: cartservice
+          - name: pod-template-hash
+            valueFrom:
+              podTemplateHashValue: Latest
   template:
     metadata:
       labels:
