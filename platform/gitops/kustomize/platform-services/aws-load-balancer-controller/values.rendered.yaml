@@ -12,7 +12,7 @@
 clusterName: eks-devsecops-dev-cluster
 
 region: ap-southeast-1
-vpcId: "vpc-0ec23e8cf3a2743cc"
+vpcId: "vpc-0ace98ef73cd65964"
 
 replicaCount: 1
 
@@ -52,6 +52,9 @@ podDisruptionBudget:
   enabled: false
   minAvailable: 1
 
+# Let the chart create and manage the "alb" IngressClass, and make
+# it the cluster default so Online Boutique's Ingress
+# (`spec.ingressClassName: alb`) resolves correctly.
 createIngressClassResource: true
 ingressClassParams:
   create: false
