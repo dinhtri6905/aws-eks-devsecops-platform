@@ -20,6 +20,7 @@ Infrastructure as Code, GitOps, automated security controls, and centralized mon
 8. [Security Architecture](#8-security-architecture)
 9. [Monitoring & Observability](#9-monitoring--observability)
 10. [Application Architecture](#10-application-architecture)
+    - [Blue/Green Deployment Strategy](#blue-green-deployment-strategy)
 11. [Deployment Guide](#11-deployment-guide)
 12. [Testing & Validation](#12-testing--validation)
 13. [Future Enhancements](#13-future-enhancements)
@@ -296,31 +297,9 @@ The Root Application — a static manifest at `platform/gitops/argocd/root-app.y
 
 ### Deployment Strategy
 
-Online Boutique services use **Blue/Green** via Argo Rollouts. A new green ReplicaSet is fully provisioned and health-checked before traffic shifts; blue keeps serving all traffic until cutover. Each service exposes `<name>-active` and `<name>-preview` Services, and after `autoPromotionSeconds`, Argo Rollouts atomically patches the active Service selector.
+Online Boutique services (`cartservice`, `checkoutservice`, `frontend`) use **Blue/Green** via Argo Rollouts, replacing native Kubernetes `Deployment` objects with the `Rollout` CRD. A new green ReplicaSet is fully provisioned and health-checked before traffic shifts; blue keeps serving all traffic until cutover.
 
-```mermaid
-sequenceDiagram
-    participant Git
-    participant ArgoCD
-    participant Rollouts as Argo Rollouts
-    Git->>ArgoCD: New image tag committed
-    ArgoCD->>Rollouts: Sync Rollout manifest
-    Rollouts->>Rollouts: Provision green ReplicaSet
-    Rollouts->>Rollouts: Health-check green
-    Rollouts->>Rollouts: autoPromotionSeconds elapses
-    Rollouts->>Rollouts: Patch active Service selector → green
-    Note over Rollouts: Blue kept alive for scaleDownDelaySeconds (instant rollback window)
-```
-
-### Rollback Strategy
-
-While `scaleDownDelaySeconds` hasn't elapsed, blue is still running — rollback is one command, and traffic returns within seconds:
-
-```bash
-kubectl argo rollouts undo <service-name> -n online-boutique
-```
-
-Once blue is scaled down, rollback means reverting the image tag commit in Git (`git revert`) and letting ArgoCD re-sync, running a fresh Blue/Green cycle with the previous image.
+Full mechanics, setup, and rollback are covered in [10. Application Architecture → Blue/Green Deployment Strategy](#blue-green-deployment-strategy).
 
 ---
 
@@ -499,6 +478,103 @@ flowchart TD
 ```
 
 All inter-service communication uses gRPC over the cluster's internal DNS. Only `frontend` is exposed externally, via the ALB Ingress — and it integrates with the platform like any other workload: deployed by ArgoCD, governed by OPA Gatekeeper, observed by Falco, scraped by Prometheus.
+
+### Blue/Green Deployment Strategy
+
+`cartservice`, `checkoutservice`, and `frontend` deploy as Argo Rollouts `Rollout` resources instead of native `Deployment`, using the **Blue/Green** strategy. The remaining eight services still use plain `Deployment` — Blue/Green is scoped to the services most sensitive to bad releases (checkout path and the public entry point).
+
+#### How It Works
+
+Each Blue/Green service exposes two Kubernetes Services pointing at the same Pods via label selectors:
+
+| Service | Purpose |
+|---|---|
+| `<name>-active` | Receives real traffic — always points at the current stable ReplicaSet |
+| `<name>-preview` | Points at the newest ReplicaSet, for pre-promotion testing before it takes real traffic |
+
+```mermaid
+sequenceDiagram
+    participant Git
+    participant ArgoCD
+    participant Rollouts as Argo Rollouts Controller
+    participant Analysis as AnalysisRun (success-rate-check)
+    participant Operator
+
+    Git->>ArgoCD: New image tag committed
+    ArgoCD->>Rollouts: Sync Rollout manifest
+    Rollouts->>Rollouts: Create new (green) ReplicaSet
+    Rollouts->>Rollouts: Wait for green Pods Ready
+    Rollouts->>Rollouts: Point preview Service → green
+    Rollouts->>Analysis: Run prePromotionAnalysis
+    Analysis-->>Rollouts: Pass / Fail
+    Rollouts->>Rollouts: Pause — wait for manual promote
+    Operator->>Rollouts: kubectl argo rollouts promote <service>
+    Rollouts->>Rollouts: Point active Service → green
+    Note over Rollouts: Old (blue) ReplicaSet kept alive for scaleDownDelaySeconds (300s) — instant rollback window
+    Rollouts->>Rollouts: Scale down blue after delay
+```
+
+Key config, set per-service in each `rollout.yaml` under `spec.strategy.blueGreen`:
+
+| Field | Value | Effect |
+|---|---|---|
+| `autoPromotionEnabled` | `false` | Every rollout pauses after the preview is ready — promotion is always a manual, deliberate action, never automatic |
+| `prePromotionAnalysis` | `success-rate-check` AnalysisTemplate | Runs automatically once the preview Pods are ready, before the Rollout allows promotion |
+| `scaleDownDelaySeconds` | `300` | Old ReplicaSet stays running 5 minutes after promotion — the actual instant-rollback window |
+
+#### Operating a Rollout
+
+Check status:
+```bash
+kubectl argo rollouts get rollout <service-name> -n online-boutique
+# or, without the plugin installed:
+kubectl get rollout <service-name> -n online-boutique -o yaml
+```
+
+Watch the preview Pod come up and confirm which ReplicaSet each Service currently targets:
+```bash
+kubectl get pods -n online-boutique -l app=<service-name>
+kubectl get svc <service-name>-preview -n online-boutique -o jsonpath='{.spec.selector}'
+kubectl get svc <service-name>-active  -n online-boutique -o jsonpath='{.spec.selector}'
+```
+
+Inspect the automatic pre-promotion analysis:
+```bash
+kubectl get analysisrun -n online-boutique
+kubectl describe analysisrun <analysisrun-name> -n online-boutique
+```
+
+Promote manually once satisfied with the preview:
+```bash
+kubectl argo rollouts promote <service-name> -n online-boutique
+```
+
+#### Rollback Mechanism
+
+Two rollback paths exist, depending on timing:
+
+**1. Instant rollback (within `scaleDownDelaySeconds`)** — the old ReplicaSet is still running, so reverting is just re-pointing the active Service; no new Pods to schedule, no image pull:
+```bash
+kubectl argo rollouts undo <service-name> -n online-boutique
+```
+Because `syncPolicy.automated.selfHeal: true` is enabled on the ArgoCD Application, running `undo` directly against the cluster is a live, out-of-band change — ArgoCD's self-heal can revert it back to whatever Git still says. Follow any cluster-side `undo` with the matching change in Git (see below) so the two stay consistent.
+
+**2. Standard GitOps rollback (source of truth stays in Git)** — revert the image tag in the service's `rollout.yaml` and push; ArgoCD syncs the change and Argo Rollouts runs a fresh Blue/Green cycle with the previous image, including a new `prePromotionAnalysis` pass:
+```bash
+git revert <commit-that-changed-the-image-tag>
+git push
+```
+This is the preferred path for this platform, since Git is the single source of truth — cluster-side `undo` is best reserved for genuine incidents that can't wait for a CI/CD round-trip.
+
+#### Known Pitfall — Label Selector Consistency
+
+Kustomize's `labels`/`commonLabels` transformer does not know the `Rollout` CRD's schema, so it patches `metadata.labels` and `spec.template.metadata.labels` but **not** `spec.selector.matchLabels`. Left unpatched, the Rollout's `matchLabels` silently drifts out of sync with the `<name>-active`/`<name>-preview` Service selectors (which Kustomize *does* patch natively), and Argo Rollouts rejects the Rollout with:
+```
+InvalidSpec: Service "<name>-active" has unmatch label "<label>" in rollout
+```
+Each `kustomization.yaml` that applies `commonLabels` over a directory containing Rollouts includes an explicit JSON6902 patch adding the same label set to `spec.selector.matchLabels` (and `spec.template.metadata.labels`), so it never drifts from the Service selectors. See `platform/gitops/kustomize/applications/online-boutique/kustomization.yaml` and `platform/gitops/kustomize/overlays/dev/applications/online-boutique/kustomization.yaml` for the pattern.
+
+Also note: `spec.selector` on a `Rollout` is immutable, same as on a `Deployment` — changing `matchLabels` on an existing Rollout requires deleting and letting ArgoCD recreate it (`kubectl delete rollout <name> -n online-boutique`, then re-sync), not a live patch.
 
 ---
 
