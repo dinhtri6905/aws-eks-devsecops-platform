@@ -1,8 +1,10 @@
 # ============================================================
 # argo-rollouts
-# Cài đặt Argo Rollouts controller (namespace + controller + CRDs)
-# qua GitOps để làm nền tảng cho Blue/Green deployment của
-# frontend, checkoutservice, cartservice trong online-boutique.
+# Installs the Argo Rollouts controller (namespace + controller +
+# CRDs) via GitOps. This is the platform-level dependency required
+# before any `kind: Rollout` manifest can be applied for Blue/Green
+# deployment of frontend, checkoutservice, cartservice in
+# online-boutique.
 # ============================================================
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
@@ -19,6 +21,8 @@ helmCharts:
       installCRDs: true
       controller:
         replicas: 1
+        config:
+          create: false
         resources:
           requests:
             cpu: 50m

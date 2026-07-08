@@ -28,6 +28,7 @@ Ghi nhớ `Arn` trả về — đây là identity sẽ cần được cấp quy�
 
 ```powershell
 aws eks update-kubeconfig --region <AWS_REGION> --name <CLUSTER_NAME>
+aws eks update-kubeconfig --region ap-southeast-1 --name eks-devsecops-dev-cluster
 ```
 
 Bước này **luôn thành công** vì chỉ ghi file cấu hình cục bộ, không kiểm tra
@@ -37,6 +38,7 @@ quyền truy cập.
 
 ```powershell
 aws eks list-access-entries --cluster-name <CLUSTER_NAME> --region <AWS_REGION>
+aws eks list-access-entries --cluster-name ap-southeast-1 --region eks-devsecops-dev-cluster
 ```
 
 Nếu ARN của bạn (Bước 1) **không nằm trong danh sách** → đây là nguyên nhân
@@ -59,6 +61,20 @@ aws eks associate-access-policy `
   --access-scope type=cluster
 ```
 
+```powershell
+aws eks create-access-entry `
+  --cluster-name eks-devsecops-dev-cluster `
+  --region ap-southeast-1 `
+  --principal-arn arn:aws:iam::041659741748:user/aws-user `
+  --type STANDARD
+
+aws eks associate-access-policy `
+  --cluster-name eks-devsecops-dev-cluster `
+  --region ap-southeast-1 `
+  --principal-arn arn:aws:iam::041659741748:user/aws-user `
+  --policy-arn arn:aws:eks::aws:cluster-access-policy/AmazonEKSClusterAdminPolicy `
+  --access-scope type=cluster
+```
 > ⚠️ Phải chạy bằng một identity **đã có quyền** cấp EKS access (ví dụ role
 > Terraform, hoặc IAM admin). Nếu chính identity của bạn chưa có quyền
 > `eks:CreateAccessEntry` / `eks:AssociateAccessPolicy` thì lệnh sẽ báo
