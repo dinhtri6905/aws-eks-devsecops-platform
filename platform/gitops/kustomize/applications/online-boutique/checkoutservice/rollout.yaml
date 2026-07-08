@@ -72,11 +72,13 @@ spec:
             periodSeconds: 15
             grpc:
               port: 5050
+              service: ""
           livenessProbe:
             initialDelaySeconds: 20
             periodSeconds: 15
             grpc:
               port: 5050
+              service: ""
           securityContext:
             allowPrivilegeEscalation: false
             readOnlyRootFilesystem: true
