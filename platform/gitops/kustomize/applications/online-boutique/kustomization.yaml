@@ -38,3 +38,9 @@ patches:
       - op: add
         path: /spec/selector/matchLabels/managed-by
         value: argocd
+      - op: add
+        path: /spec/template/metadata/labels/project
+        value: eks-devsecops
+      - op: add
+        path: /spec/template/metadata/labels/managed-by
+        value: argocd
