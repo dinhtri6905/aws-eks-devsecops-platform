@@ -1,0 +1,17 @@
+# Explicit Namespace object for argo-rollouts.
+#
+# Why this is needed: the platform-services Application already has
+# `syncOptions: [CreateNamespace=true]`, but that option only
+# auto-creates the Application's own `destination.namespace`
+# (kube-system in this repo). It does NOT create other namespaces
+# that individual resources declare via their own `namespace:` field
+# (as this Helm chart does via `namespace: argo-rollouts` in
+# kustomization.yaml). Without this object, ArgoCD fails to sync
+# every resource in this chart with "namespaces argo-rollouts not
+# found".
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: argo-rollouts
+  labels:
+    app.kubernetes.io/part-of: aws-eks-devsecops-platform
