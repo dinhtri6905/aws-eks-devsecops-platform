@@ -11,6 +11,9 @@ kind: Kustomization
 
 namespace: argo-rollouts
 
+resources:
+  - namespace.yaml
+  
 helmCharts:
   - name: argo-rollouts
     repo: https://argoproj.github.io/argo-helm
