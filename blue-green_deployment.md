@@ -22,7 +22,7 @@ Nguyên tắc xuyên suốt: **mọi thứ đi qua Git**, không ai `kubectl app
 
 ## 2. Việc cần làm — theo đúng thứ tự
 
-### Bước 0 — Cài Argo Rollouts controller qua GitOps (một lần, cấp platform) ✅ Đã triển khai
+### Bước 0 — Cài Argo Rollouts controller qua GitOps (một lần, cấp platform)
 
 Argo Rollouts **không** được cài bằng tay. Nó phải là một Application con trong App of Apps, giống cách `platform-services`, `observability`, `falco` đang được quản lý trong `argocd/applications/`.
 
@@ -59,7 +59,7 @@ Argo Rollouts **không** được cài bằng tay. Nó phải là một Applicat
 3. Application `platform-services.yaml` trong `argocd/applications/` đã trỏ tới thư mục `platform-services` này — không cần tạo Application mới, chỉ cần commit thư mục Argo Rollouts vào đúng chỗ và để ArgoCD tự sync theo sync-wave hiện có.
 4. Xác nhận qua `kubectl get pods -n argo-rollouts` và `kubectl get crd | grep argoproj.io` sau khi ArgoCD sync xong.
 
-### Bước 1 — Đăng ký sức khỏe của `Rollout` với ArgoCD ✅ Đã triển khai
+### Bước 1 — Đăng ký sức khỏe của `Rollout` với ArgoCD
 
 Vì `Rollout` là CRD của Argo Rollouts, ArgoCD mặc định không biết cách đánh giá "Healthy/Progressing/Degraded" cho nó — Application sẽ báo `Healthy` ngay cả khi rollout đang giữa chừng nếu không cấu hình.
 
@@ -88,7 +88,7 @@ data:
     return hs
 ```
 
-### Bước 2 — Thêm `AnalysisTemplate` dùng chung ✅ Đã triển khai (đổi metric so với thiết kế ban đầu)
+### Bước 2 — Thêm `AnalysisTemplate` dùng chung
 
 **Vì sao không dùng `http_requests_total`:** thiết kế ban đầu định query error-rate HTTP qua Prometheus. Đã xác minh trực tiếp trên `src/frontend` (Go) của Online Boutique gốc — không có route `/metrics`, không import `prometheus/client_golang`. `ServiceMonitor` trong `kustomize/observability/kube-prometheus-stack/servicemonitors/online-boutique.yaml` chỉ định nghĩa *nơi* Prometheus sẽ scrape (`/metrics` trên port `http`/`grpc`), không đảm bảo app *có* endpoint đó. Nếu giữ nguyên query cũ, kết quả luôn là "no data" → Argo Rollouts coi AnalysisRun là `Inconclusive` → **Rollout treo vĩnh viễn**, không bao giờ tự abort cũng không bao giờ tự promote được.
 
