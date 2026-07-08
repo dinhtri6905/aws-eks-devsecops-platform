@@ -8,7 +8,6 @@ metadata:
 data:
   resource.customizations.health.templates.gatekeeper.sh_ConstraintTemplate: |
     hs = {}
-
     if obj.status ~= nil and obj.status.created == true then
       hs.status = "Healthy"
       hs.message = "ConstraintTemplate created successfully"
@@ -17,4 +16,21 @@ data:
 
     hs.status = "Progressing"
     hs.message = "Waiting for Gatekeeper to create ConstraintTemplate"
+    return hs
+
+  resource.customizations.health.argoproj.io_Rollout: |
+    hs = {}
+    if obj.status ~= nil then
+      if obj.status.phase == "Degraded" then
+        hs.status = "Degraded"
+        hs.message = obj.status.message
+        return hs
+      elseif obj.status.phase == "Healthy" then
+        hs.status = "Healthy"
+        hs.message = "Rollout is healthy"
+        return hs
+      end
+    end
+    hs.status = "Progressing"
+    hs.message = "Rollout in progress"
     return hs

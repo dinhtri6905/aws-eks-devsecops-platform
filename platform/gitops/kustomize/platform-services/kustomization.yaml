@@ -4,3 +4,4 @@ kind: Kustomization
 resources:
   - metrics-server/
   - aws-load-balancer-controller/
+  - argo-rollouts/

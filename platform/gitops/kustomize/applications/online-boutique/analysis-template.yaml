@@ -1,0 +1,36 @@
+# ============================================================
+# success-rate-check
+# Shared AnalysisTemplate for Blue/Green rollouts.
+# (frontend, checkoutservice, cartservice).
+
+# Shared AnalysisTemplate for Blue/Green rollouts.
+# Uses kube-state-metrics to verify that containers in the new
+# ReplicaSet have zero restarts during analysis. Any restart
+# causes the rollout to fail and abort, keeping traffic on the
+# stable version.
+apiVersion: argoproj.io/v1alpha1
+kind: AnalysisTemplate
+metadata:
+  name: success-rate-check
+spec:
+  args:
+    - name: service-name
+    - name: pod-template-hash
+  metrics:
+    - name: restart-count
+      interval: 1m
+      count: 5
+      # Pass only if all containers in the new rollout pods have
+      # zero restarts during the analysis period.
+      successCondition: result[0] == 0
+      failureLimit: 2
+      provider:
+        prometheus:
+          address: http://kube-prometheus-stack-prometheus.monitoring:9090
+          query: |
+            sum(
+              kube_pod_container_status_restarts_total{
+                namespace="online-boutique",
+                pod=~"{{args.service-name}}-{{args.pod-template-hash}}-.*"
+              }
+            )

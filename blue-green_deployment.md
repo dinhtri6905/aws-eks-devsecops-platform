@@ -1,50 +1,63 @@
-# Blue/Green Deployment Guide — Online Boutique
+# Blue/Green Deployment Guide — Online Boutique (GitOps với ArgoCD + Argo Rollouts)
 
-This document describes the Blue/Green deployment process implemented via **Argo Rollouts** for the three business-critical services in the platform. All other services remain on standard Kubernetes `Deployment` + `RollingUpdate`.
+Tài liệu này mô tả **quy trình thực tế cần thực hiện** để triển khai Blue/Green cho 3 service trọng yếu (`frontend`, `checkoutservice`, `cartservice`) trong repo `aws-eks-devsecops-platform`, tuân thủ đúng cấu trúc GitOps (App of Apps + Kustomize base/overlays) đang có trong `platform/gitops/`. Toàn bộ 11 service còn lại vẫn giữ nguyên `Deployment` + `RollingUpdate`.
+
+Nguyên tắc xuyên suốt: **mọi thứ đi qua Git**, không ai `kubectl apply` tay ngoài các lệnh vận hành Rollout (promote/abort/undo) — bản thân các lệnh đó cũng chỉ thao tác trên resource đã được ArgoCD tạo ra từ Git.
 
 ---
 
-## 1. Scope
+## 1. Phạm vi áp dụng
 
-Blue/Green is applied selectively, not to all 11 microservices. Applying it everywhere adds operational overhead (double the pod capacity during rollout, extra Analysis queries, more moving parts) with no benefit for low-risk, stateless, read-heavy services. Only services where a bad deploy has a large, direct, or hard-to-reverse impact get the extra safety net.
-
-| Service | Blue/Green? | Reason |
+| Service | Blue/Green? | Lý do |
 |---|---|---|
-| `frontend` | Yes | Entry point — every user request passes through it |
-| `checkoutservice` | Yes | Orchestrates cart → payment → shipping → email; a failure means a lost order |
-| `cartservice` | Yes | Business-critical, holds cart state, changes frequently |
-| `productcatalogservice`, `currencyservice`, `shippingservice`, `adservice`, `recommendationservice` | No | Stateless, read-heavy, low risk — rolling update is sufficient |
-| `emailservice`, `paymentservice`, `loadgenerator` | No | Mocked / non-critical / internal only |
+| `frontend` | Có | Entry point — mọi request người dùng đều đi qua |
+| `checkoutservice` | Có | Điều phối cart → payment → shipping → email; lỗi = mất đơn hàng |
+| `cartservice` | Có | Business-critical, giữ state giỏ hàng, thay đổi thường xuyên |
+| `productcatalogservice`, `currencyservice`, `shippingservice`, `adservice`, `recommendationservice` | Không | Stateless, read-heavy, rủi ro thấp — rolling update là đủ |
+| `emailservice`, `paymentservice`, `loadgenerator`, `redis-cart`, `shoppingassistantservice` | Không | Mock / nội bộ / không phải business-critical theo nghĩa rollout |
 
 ---
 
-## 2. How Blue/Green Works Here
+## 2. Việc cần làm — theo đúng thứ tự
 
-Each of the three services runs as an Argo Rollouts `Rollout` resource instead of a `Deployment`, backed by two Kubernetes Services:
+### Bước 0 — Cài Argo Rollouts controller qua GitOps (một lần, cấp platform)
 
-- **`<service>-active`** — receives 100% of live traffic. The Ingress (for `frontend`) or upstream callers (for `checkoutservice`, `cartservice`) always point here.
-- **`<service>-preview`** — points at the new (green) ReplicaSet only, for internal verification before it takes over.
+Argo Rollouts **không** được cài bằng tay. Nó phải là một Application con trong App of Apps, giống cách `platform-services`, `observability`, `falco` đang được quản lý trong `argocd/applications/`.
 
-```mermaid
-flowchart LR
-    Git[Git: new image tag] --> ArgoCD[ArgoCD sync]
-    ArgoCD --> Rollout[Rollout controller]
-    Rollout --> Green[New ReplicaSet -- green]
-    Green -->|health checks pass| Analysis[AnalysisTemplate: Prometheus error-rate check]
-    Analysis -->|pass| Promote{Promote}
-    Analysis -->|fail| Abort[Abort -- blue stays active]
-    Promote -->|manual or auto| Switch[active Service selector -> green]
-    Switch --> DelayWindow[Blue kept alive: scaleDownDelaySeconds]
-    DelayWindow --> ScaleDown[Blue scaled down]
+1. Thêm manifest cài đặt Argo Rollouts (namespace + controller + CRDs) vào `kustomize/platform-services/argo-rollouts/` (thư mục mới, cùng cấp với `aws-load-balancer-controller`, `metrics-server`).
+2. Thêm entry vào `kustomize/platform-services/kustomization.yaml`.
+3. Application `platform-services.yaml` trong `argocd/applications/` đã trỏ tới thư mục `platform-services` này — không cần tạo Application mới, chỉ cần commit thư mục Argo Rollouts vào đúng chỗ và để ArgoCD tự sync theo sync-wave hiện có.
+4. Xác nhận qua `kubectl get pods -n argo-rollouts` sau khi ArgoCD sync xong.
+
+### Bước 1 — Đăng ký sức khỏe của `Rollout` với ArgoCD
+
+Vì `Rollout` là CRD của Argo Rollouts, ArgoCD mặc định không biết cách đánh giá "Healthy/Progressing/Degraded" cho nó — Application sẽ báo `Healthy` ngay cả khi rollout đang giữa chừng nếu không cấu hình.
+
+- Thêm đoạn `resource.customizations.health.argoproj.io_Rollout` (Lua script) vào `argocd/config/argocd-cm-patch.yaml` — đây là ConfigMap `argocd-cm` đã tồn tại, được đồng bộ bởi Application `argocd-config` (sync-wave `"0"`, chạy sớm nhất). Chỉ cần thêm key mới vào `data`, không tạo file/Application mới.
+
+```yaml
+data:
+  resource.customizations.health.argoproj.io_Rollout: |
+    hs = {}
+    if obj.status ~= nil then
+      if obj.status.phase == "Degraded" then
+        hs.status = "Degraded"
+        hs.message = obj.status.message
+        return hs
+      elseif obj.status.phase == "Healthy" then
+        hs.status = "Healthy"
+        hs.message = "Rollout is healthy"
+        return hs
+      end
+    end
+    hs.status = "Progressing"
+    hs.message = "Rollout in progress"
+    return hs
 ```
 
-Cutover happens by Argo Rollouts patching the `active` Service's selector — not by changing anything on the ALB or Ingress. This is why the AWS Load Balancer Controller and target groups need no changes during a Blue/Green release.
+### Bước 2 — Thêm `AnalysisTemplate` dùng chung
 
----
-
-## 3. Safety Gate: AnalysisTemplate
-
-Instead of promoting on a blind timer, each Rollout is gated by a shared `AnalysisTemplate` that queries Prometheus (already deployed via kube-prometheus-stack):
+Tạo file mới `kustomize/applications/online-boutique/analysis-template.yaml`, query Prometheus đã có sẵn (`kube-prometheus-stack` do Application `observability` triển khai):
 
 ```yaml
 apiVersion: argoproj.io/v1alpha1
@@ -69,23 +82,89 @@ spec:
             sum(rate(http_requests_total{service="{{args.service-name}}"}[2m]))
 ```
 
-If the 5xx error rate reaches 1% or higher across 2 of 5 checks, the Rollout **aborts automatically** — blue keeps serving traffic, no human action required.
+Đăng ký file này vào `kustomize/applications/online-boutique/kustomization.yaml` (`resources:` gốc, không thuộc thư mục con nào — cùng cấp `adservice`, `cartservice`, ...).
 
-- **`frontend`** uses `postPromotionAnalysis` — traffic is verified through the `preview` Service manually (via port-forward) before promotion, then Analysis confirms health after the switch.
-- **`checkoutservice`** and **`cartservice`** use `prePromotionAnalysis` — internal gRPC services have no manual preview step, so Analysis must pass before promotion is allowed.
+Nếu 5xx error rate ≥ 1% ở 2/5 lần kiểm tra, Rollout **tự abort** — blue tiếp tục nhận traffic, không cần con người can thiệp.
 
----
+### Bước 3 — Chuyển 3 service từ `Deployment` sang `Rollout` (đúng cấu trúc thư mục hiện có)
 
-## 4. Promotion Mode
+Với mỗi service trong `kustomize/applications/online-boutique/<service>/`:
 
-| Environment | `autoPromotionEnabled` | Behavior |
+1. **Không xoá `deployment.yaml`** theo nghĩa mất pod spec — đổi `kind: Deployment` → `kind: Rollout`, `apiVersion: apps/v1` → `apiVersion: argoproj.io/v1alpha1`, giữ nguyên `spec.selector`, `spec.template` (containers, probes, securityContext...) như file gốc đã có. Nên đổi tên file thành `rollout.yaml` để phản ánh đúng kind, và cập nhật `kustomization.yaml` của service tương ứng.
+2. Thêm `spec.strategy.blueGreen` vào Rollout (chi tiết per-service ở mục 5).
+3. **Đổi `service.yaml` hiện tại** — mỗi service hiện chỉ có **một** Service (`frontend`, `cartservice`, `checkoutservice`). Cần thay bằng **hai** Service: `<service>-active` và `<service>-preview`, cùng selector `app: <service>` (Rollout controller sẽ tự patch label `rollouts-pod-template-hash` để phân biệt blue/green — không cần chỉnh selector thủ công).
+4. `frontend/ingress.yaml`: đổi `backend.service.name` từ `frontend` → `frontend-active`. Đây là **thay đổi duy nhất** liên quan tới ALB Ingress; AWS Load Balancer Controller không cần cấu hình gì thêm.
+5. `checkoutservice`, `cartservice` không có Ingress — các service gọi chúng qua biến môi trường (`CART_SERVICE_ADDR`, `CHECKOUT_SERVICE_ADDR` trong `frontend`/`checkoutservice` deployment) **phải trỏ sang `<service>-active`**, ví dụ `CART_SERVICE_ADDR=cartservice-active:7070`. Cập nhật trong `frontend/deployment.yaml` (đổi thành `Rollout`) và `checkoutservice/deployment.yaml` (đổi thành `Rollout`).
+
+### Bước 4 — Cấu hình promotion theo môi trường qua overlay Kustomize (không sửa base 2 lần)
+
+Base (`kustomize/applications/online-boutique/*`) chứa cấu hình **prod-safe mặc định**: `autoPromotionEnabled: false`.
+
+- **Prod** (`kustomize/overlays/prod/`): không cần patch gì thêm cho phần promotion — kế thừa nguyên base.
+- **Dev** (`kustomize/overlays/dev/applications/online-boutique/`): thêm một patch mới `bluegreen-autopromote-patch.yaml` chỉ áp cho 3 Rollout, set `autoPromotionEnabled: true` + `autoPromotionSeconds: 30`, đăng ký patch này trong `kustomization.yaml` của overlay dev (cạnh `replicas-patch.yaml`, `configmap-patch.yaml` đã có), target `kind: Rollout` thay vì `kind: Deployment`.
+
+| Environment | `autoPromotionEnabled` | Hành vi |
 |---|---|---|
-| Dev | `true` (`autoPromotionSeconds: 30`) | Promotes automatically after 30s if healthy — fast iteration, low stakes |
-| Prod | `false` | Requires a human to run `promote` after reviewing dashboards/QA — standard practice for customer-facing services |
+| Dev | `true` (`autoPromotionSeconds: 30`) | Tự promote sau 30s nếu healthy |
+| Prod | `false` | Cần con người chạy lệnh `promote` sau khi kiểm tra |
+
+### Bước 5 — Không cần sửa `app-cd.yaml` (CI/CD pipeline)
+
+Pipeline hiện tại (build → Trivy scan → push ECR → `kustomize edit set image` → commit) chỉ update image tag trong manifest. Vì manifest giờ là `kind: Rollout` thay vì `Deployment`, `kustomize edit set image` vẫn hoạt động y hệt (nó thao tác trên `spec.template.spec.containers[].image`, không quan tâm `kind`). ArgoCD sync sẽ tự động kích hoạt chu trình Blue/Green.
+
+### Bước 6 — Commit, mở PR, để ArgoCD tự sync
+
+Vì `online-boutique.yaml` (Application) đã có `syncPolicy.automated` với `prune: true`, `selfHeal: true`, không cần tạo Application mới hay sync tay — chỉ cần:
+
+```bash
+git add platform/gitops/kustomize/applications/online-boutique/ \
+        platform/gitops/kustomize/overlays/ \
+        platform/gitops/argocd/config/argocd-cm-patch.yaml \
+        platform/gitops/kustomize/platform-services/
+git commit -m "Migrate frontend, checkoutservice, cartservice to Argo Rollouts Blue/Green"
+git push
+```
+
+ArgoCD phát hiện thay đổi và tự sync theo sync-wave hiện có (`argocd-config` wave 0 → `platform-services` → ... → `online-boutique` wave 7), đúng thứ tự cần thiết: cấu hình health check của ArgoCD và Argo Rollouts controller phải sẵn sàng **trước** khi Rollout của online-boutique được tạo ra.
+
+### Bước 7 — Xác minh thủ công lần đầu
+
+```bash
+kubectl get pods -n argo-rollouts
+kubectl get crd | grep argoproj.io
+kubectl argo rollouts get rollout frontend -n online-boutique --watch
+```
 
 ---
 
-## 5. Per-Service Configuration
+## 3. Cơ chế hoạt động
+
+Mỗi Rollout được backend bởi hai Service:
+
+- **`<service>-active`** — nhận 100% traffic sống. Ingress (`frontend`) hoặc caller nội bộ (`checkoutservice`, `cartservice` — qua biến môi trường) luôn trỏ vào đây.
+- **`<service>-preview`** — trỏ vào ReplicaSet mới (green) để kiểm tra nội bộ trước khi promote.
+
+```mermaid
+flowchart LR
+    Git[Git: image tag mới] --> ArgoCD[ArgoCD sync]
+    ArgoCD --> Rollout[Rollout controller]
+    Rollout --> Green[ReplicaSet mới -- green]
+    Green -->|health checks pass| Analysis[AnalysisTemplate: Prometheus error-rate]
+    Analysis -->|pass| Promote{Promote}
+    Analysis -->|fail| Abort[Abort -- blue vẫn active]
+    Promote -->|manual hoặc auto| Switch[active Service selector -> green]
+    Switch --> DelayWindow[Blue giữ sống: scaleDownDelaySeconds]
+    DelayWindow --> ScaleDown[Blue scale down]
+```
+
+Cutover xảy ra bằng cách Argo Rollouts patch selector của Service `active` — **không** đổi gì trên ALB/Ingress.
+
+- **`frontend`** dùng `postPromotionAnalysis` — kiểm tra traffic qua `preview` Service thủ công (port-forward), rồi Analysis xác nhận sức khỏe sau khi switch.
+- **`checkoutservice`**, **`cartservice`** dùng `prePromotionAnalysis` — service gRPC nội bộ không có bước preview thủ công, nên Analysis phải pass trước khi được phép promote.
+
+---
+
+## 4. Cấu hình từng service (đích cần đạt sau khi migrate)
 
 ### `frontend`
 
@@ -94,8 +173,14 @@ apiVersion: argoproj.io/v1alpha1
 kind: Rollout
 metadata:
   name: frontend
+  labels:
+    app: frontend
+    app.kubernetes.io/name: frontend
+    app.kubernetes.io/part-of: aws-eks-devsecops-platform
 spec:
-  replicas: 2
+  selector:
+    matchLabels:
+      app: frontend
   strategy:
     blueGreen:
       activeService: frontend-active
@@ -108,33 +193,32 @@ spec:
         args:
           - name: service-name
             value: frontend
-  selector:
-    matchLabels:
-      app: frontend
-  template:
-    metadata:
-      labels:
-        app: frontend
-    spec: {}  # unchanged from the existing Deployment pod spec
+  template: {}  # giữ nguyên metadata.labels + spec từ Deployment gốc (containers, probes, securityContext)
 ---
 apiVersion: v1
 kind: Service
 metadata:
   name: frontend-active
+  labels:
+    app: frontend
 spec:
+  type: ClusterIP
   selector: { app: frontend }
-  ports: [{ port: 80, targetPort: 8080 }]
+  ports: [{ name: http, port: 80, targetPort: 8080 }]
 ---
 apiVersion: v1
 kind: Service
 metadata:
   name: frontend-preview
+  labels:
+    app: frontend
 spec:
+  type: ClusterIP
   selector: { app: frontend }
-  ports: [{ port: 80, targetPort: 8080 }]
+  ports: [{ name: http, port: 80, targetPort: 8080 }]
 ```
 
-> The ALB Ingress must point to `frontend-active` (previously `frontend`). No other ALB configuration changes.
+> `frontend/ingress.yaml`: `backend.service.name` đổi thành `frontend-active`. Không có thay đổi ALB nào khác.
 
 ### `checkoutservice`
 
@@ -143,8 +227,14 @@ apiVersion: argoproj.io/v1alpha1
 kind: Rollout
 metadata:
   name: checkoutservice
+  labels:
+    app: checkoutservice
+    app.kubernetes.io/name: checkoutservice
+    app.kubernetes.io/part-of: aws-eks-devsecops-platform
 spec:
-  replicas: 2
+  selector:
+    matchLabels:
+      app: checkoutservice
   strategy:
     blueGreen:
       activeService: checkoutservice-active
@@ -157,30 +247,29 @@ spec:
         args:
           - name: service-name
             value: checkoutservice
-  selector:
-    matchLabels:
-      app: checkoutservice
-  template:
-    metadata:
-      labels:
-        app: checkoutservice
-    spec: {}  # unchanged from the existing Deployment pod spec
+  template: {}  # giữ nguyên spec Deployment gốc; CART_SERVICE_ADDR -> cartservice-active:7070
 ---
 apiVersion: v1
 kind: Service
 metadata:
   name: checkoutservice-active
+  labels:
+    app: checkoutservice
 spec:
+  type: ClusterIP
   selector: { app: checkoutservice }
-  ports: [{ port: 5050, targetPort: 5050 }]
+  ports: [{ name: grpc, port: 5050, targetPort: 5050 }]
 ---
 apiVersion: v1
 kind: Service
 metadata:
   name: checkoutservice-preview
+  labels:
+    app: checkoutservice
 spec:
+  type: ClusterIP
   selector: { app: checkoutservice }
-  ports: [{ port: 5050, targetPort: 5050 }]
+  ports: [{ name: grpc, port: 5050, targetPort: 5050 }]
 ```
 
 ### `cartservice`
@@ -190,8 +279,14 @@ apiVersion: argoproj.io/v1alpha1
 kind: Rollout
 metadata:
   name: cartservice
+  labels:
+    app: cartservice
+    app.kubernetes.io/name: cartservice
+    app.kubernetes.io/part-of: aws-eks-devsecops-platform
 spec:
-  replicas: 2
+  selector:
+    matchLabels:
+      app: cartservice
   strategy:
     blueGreen:
       activeService: cartservice-active
@@ -204,115 +299,72 @@ spec:
         args:
           - name: service-name
             value: cartservice
-  selector:
-    matchLabels:
-      app: cartservice
-  template:
-    metadata:
-      labels:
-        app: cartservice
-    spec: {}  # unchanged from the existing Deployment pod spec, including Redis connection env vars
+  template: {}  # giữ nguyên spec Deployment gốc, gồm REDIS_ADDR=redis-cart:6379
 ---
 apiVersion: v1
 kind: Service
 metadata:
   name: cartservice-active
+  labels:
+    app: cartservice
 spec:
+  type: ClusterIP
   selector: { app: cartservice }
-  ports: [{ port: 7070, targetPort: 7070 }]
+  ports: [{ name: grpc, port: 7070, targetPort: 7070 }]
 ---
 apiVersion: v1
 kind: Service
 metadata:
   name: cartservice-preview
+  labels:
+    app: cartservice
 spec:
+  type: ClusterIP
   selector: { app: cartservice }
-  ports: [{ port: 7070, targetPort: 7070 }]
+  ports: [{ name: grpc, port: 7070, targetPort: 7070 }]
 ```
+
+> `redis-cart` không đổi — vẫn là `Deployment` thường, chỉ `cartservice` (client của Redis) chuyển sang Rollout.
 
 ---
 
-## 6. Prerequisites in the Cluster
-
-Before any of the above works, confirm:
+## 5. Lệnh vận hành
 
 ```bash
-# Argo Rollouts controller running
-kubectl get pods -n argo-rollouts
-
-# CRDs installed
-kubectl get crd | grep argoproj.io
-
-# kubectl plugin (for CLI commands below)
-kubectl krew install argo-rollouts
-kubectl argo rollouts version
-```
-
-ArgoCD must also be able to evaluate `Rollout` health, or an Application will report `Healthy` even mid-rollout. This is configured once in `argocd-cm` (part of the `argocd-config` Application, sync-wave 0):
-
-```yaml
-data:
-  resource.customizations.health.argoproj.io_Rollout: |
-    hs = {}
-    if obj.status ~= nil then
-      if obj.status.phase == "Degraded" then
-        hs.status = "Degraded"
-        hs.message = obj.status.message
-        return hs
-      elseif obj.status.phase == "Healthy" then
-        hs.status = "Healthy"
-        hs.message = "Rollout is healthy"
-        return hs
-      end
-    end
-    hs.status = "Progressing"
-    hs.message = "Rollout in progress"
-    return hs
-```
-
----
-
-## 7. Operational Commands
-
-```bash
-# Watch a rollout in progress
+# Theo dõi rollout
 kubectl argo rollouts get rollout frontend -n online-boutique --watch
 
-# Preview the new version before promoting (frontend only — manual check)
+# Xem trước bản mới trước khi promote (chỉ frontend — bước kiểm tra thủ công)
 kubectl port-forward svc/frontend-preview -n online-boutique 8081:80
 
-# Promote manually (prod)
+# Promote thủ công (prod)
 kubectl argo rollouts promote frontend -n online-boutique
 
-# Abort a bad rollout — blue keeps serving traffic
+# Abort rollout lỗi — blue tiếp tục phục vụ traffic
 kubectl argo rollouts abort frontend -n online-boutique
 
-# Roll back instantly while blue is still alive (within scaleDownDelaySeconds)
+# Rollback ngay lập tức trong khi blue còn sống (trong scaleDownDelaySeconds)
 kubectl argo rollouts undo frontend -n online-boutique
 ```
 
-Replace `frontend` with `checkoutservice` or `cartservice` as needed.
+Thay `frontend` bằng `checkoutservice` hoặc `cartservice` khi cần.
 
 ---
 
-## 8. Rollback Behavior
+## 6. Rollback
 
-| Situation | Rollback method | Time to recover |
+| Tình huống | Cách rollback | Thời gian |
 |---|---|---|
-| Within `scaleDownDelaySeconds` (blue still running) | `kubectl argo rollouts undo <service>` | Seconds — instant Service selector switch back to blue |
-| After blue has been scaled down | `git revert` the image tag commit, let ArgoCD re-sync | Minutes — runs a fresh Blue/Green cycle with the previous image |
+| Trong `scaleDownDelaySeconds` (blue còn chạy) | `kubectl argo rollouts undo <service>` | Vài giây — chỉ đổi lại selector của Service active |
+| Sau khi blue đã bị scale down | `git revert` commit đổi image tag, để ArgoCD tự sync lại | Vài phút — chạy lại toàn bộ chu trình Blue/Green với image cũ |
+
+Lưu ý GitOps: `kubectl argo rollouts undo` chỉ là rollback tức thời ở cluster; **trạng thái Git không đổi**. Nếu muốn trạng thái "đích" trong Git khớp với cluster sau khi undo, vẫn cần `git revert` sau đó, nếu không ArgoCD (với `selfHeal: true`) sẽ tự động sync lại về image mới (lỗi) trong lần reconcile tiếp theo.
 
 ---
 
-## 9. CI/CD Integration
+## 7. Thông báo Slack
 
-No changes are required to the existing `app-cd.yaml` pipeline (build → Trivy scan → push to ECR → `kustomize edit set image` → commit). It only updates the image tag in the manifest; because the manifest kind is now `Rollout` instead of `Deployment`, ArgoCD's sync automatically drives the Blue/Green cycle described above.
-
----
-
-## 10. Notifications
-
-Argo Rollouts has its own notification controller, separate from ArgoCD Notifications, reusing the existing `SLACK_WEBHOOK_URL`:
+Argo Rollouts có notification controller riêng, tách khỏi ArgoCD Notifications, dùng chung `SLACK_WEBHOOK_URL` đã cấu hình. Thêm ConfigMap này vào `kustomize/platform-services/argo-rollouts/` (namespace `argo-rollouts`), cùng chỗ với manifest cài đặt controller ở Bước 0:
 
 ```yaml
 apiVersion: v1
@@ -328,3 +380,19 @@ data:
   service.slack: |
     token: $slack-token
 ```
+
+---
+
+## 8. Checklist tổng hợp (PR review)
+
+- [ ] `kustomize/platform-services/argo-rollouts/` — controller + CRDs, đăng ký vào `platform-services/kustomization.yaml`
+- [ ] `argocd/config/argocd-cm-patch.yaml` — thêm health check Lua cho `Rollout`
+- [ ] `kustomize/applications/online-boutique/analysis-template.yaml` — AnalysisTemplate, đăng ký vào kustomization gốc
+- [ ] `frontend/`, `checkoutservice/`, `cartservice/`: `deployment.yaml` → `rollout.yaml` (kind `Rollout`, thêm `strategy.blueGreen`)
+- [ ] `frontend/`, `checkoutservice/`, `cartservice/`: `service.yaml` → hai Service `-active` / `-preview`
+- [ ] `frontend/ingress.yaml`: backend → `frontend-active`
+- [ ] `frontend`, `checkoutservice` deployment env: `CART_SERVICE_ADDR`, `CHECKOUT_SERVICE_ADDR` → trỏ `-active`
+- [ ] `kustomization.yaml` của từng service cập nhật tên file
+- [ ] `overlays/dev/.../kustomization.yaml`: thêm patch `autoPromotionEnabled: true` cho 3 Rollout
+- [ ] Không sửa `app-cd.yaml` — không cần thiết
+- [ ] Commit, push, theo dõi ArgoCD tự sync theo sync-wave có sẵn

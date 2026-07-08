@@ -21,3 +21,4 @@ resources:
   - redis-cart
   - shippingservice
   # - shoppingassistantservice
+  - analysis-template.yaml
