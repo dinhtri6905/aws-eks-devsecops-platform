@@ -42,6 +42,7 @@ spec:
           image: gcr.io/google-samples/microservices-demo/cartservice:v0.10.0
           ports:
             - containerPort: 7070
+              protocol: TCP
               name: grpc
           env:
             - name: REDIS_ADDR
