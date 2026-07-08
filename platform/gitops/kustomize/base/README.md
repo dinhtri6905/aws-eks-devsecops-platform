@@ -56,3 +56,10 @@ overlays/prod/ ──┘
 ```
 
 Any resource that needs to exist before its owning layer syncs — most importantly the namespaces — should be added here rather than duplicated per-layer.
+
+```text
+overlays/dev/kustomization.yaml
+  → bases: overlays/dev/applications/online-boutique/kustomization.yaml   (commonLabels: environment: dev)
+      → bases: gitops/kustomize/applications/online-boutique/kustomization.yaml   (commonLabels: project, managed-by)
+          → cartservice/, checkoutservice/, frontend/ (rollout.yaml có sẵn app.kubernetes.io/part-of viết cứng)
+```
