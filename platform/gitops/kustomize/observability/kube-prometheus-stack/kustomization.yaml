@@ -64,3 +64,6 @@ resources:
   # ServiceMonitors — tells Prometheus what to scrape
   - servicemonitors/kubernetes.yaml
   - servicemonitors/online-boutique.yaml
+
+  # Alertmanager routing — sends firing alerts to Slack
+  - alertmanager/alertmanager-config.yaml

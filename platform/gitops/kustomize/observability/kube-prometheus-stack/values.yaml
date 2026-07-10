@@ -119,6 +119,20 @@ alertmanager:
   alertmanagerSpec:
     retention: 120h
 
+    # Allow Alertmanager to discover AlertmanagerConfig CRDs defined
+    # outside this Helm release (e.g. platform/gitops/.../alertmanager/).
+    # Without this selector, standalone AlertmanagerConfig objects are
+    # silently ignored by the Operator.
+    alertmanagerConfigSelector:
+      matchLabels:
+        release: kube-prometheus-stack
+    # Empty selector = look in all namespaces, not just "monitoring".
+    alertmanagerConfigNamespaceSelector: {}
+    # "None" applies AlertmanagerConfig routes as-is, without the Operator
+    # auto-injecting a namespace matcher onto each route.
+    alertmanagerConfigMatcherStrategy:
+      type: None
+
     resources:
       requests:
         cpu: 50m

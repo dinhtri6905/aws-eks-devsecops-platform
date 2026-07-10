@@ -1,0 +1,69 @@
+# ============================================================
+# AlertmanagerConfig: Route Prometheus alerts to Slack
+# ============================================================
+# Requires a pre-existing Secret "slack-webhook-secret" in this
+# namespace, with key "url" containing the Slack Incoming Webhook URL.
+# Create it out-of-band (not committed to Git):
+#
+#   kubectl create secret generic slack-webhook-secret \
+#     --namespace monitoring \
+#     --from-literal=url='https://hooks.slack.com/services/...'
+#
+apiVersion: monitoring.coreos.com/v1alpha1
+kind: AlertmanagerConfig
+metadata:
+  name: slack-routing
+  namespace: monitoring
+  labels:
+    app.kubernetes.io/part-of: aws-eks-devsecops-platform
+    platform-layer: observability
+    release: kube-prometheus-stack
+spec:
+  route:
+    groupBy: ["alertname", "severity", "namespace"]
+    groupWait: 30s
+    groupInterval: 5m
+    repeatInterval: 4h
+    receiver: slack-warning
+    routes:
+      - matchers:
+          - name: severity
+            value: critical
+        receiver: slack-critical
+        repeatInterval: 1h
+        continue: false
+
+      - matchers:
+          - name: severity
+            value: warning
+        receiver: slack-warning
+        continue: false
+
+  receivers:
+    - name: slack-warning
+      slackConfigs:
+        - apiURL:
+            name: slack-webhook-secret
+            key: url
+          channel: "#platform-alerts"
+          sendResolved: true
+          title: '{{ "{{" }} .CommonLabels.alertname {{ "}}" }}'
+          text: >-
+            {{ "{{" }} range .Alerts {{ "}}" }}
+            *{{ "{{" }} .Labels.severity | toUpper {{ "}}" }}*: {{ "{{" }} .Annotations.summary {{ "}}" }}
+            {{ "{{" }} .Annotations.description {{ "}}" }}
+            {{ "{{" }} end {{ "}}" }}
+
+    - name: slack-critical
+      slackConfigs:
+        - apiURL:
+            name: slack-webhook-secret
+            key: url
+          channel: "#platform-critical"
+          sendResolved: true
+          title: '🚨 {{ "{{" }} .CommonLabels.alertname {{ "}}" }}'
+          text: >-
+            {{ "{{" }} range .Alerts {{ "}}" }}
+            *{{ "{{" }} .Labels.severity | toUpper {{ "}}" }}*: {{ "{{" }} .Annotations.summary {{ "}}" }}
+            {{ "{{" }} .Annotations.description {{ "}}" }}
+            {{ "{{" }} end {{ "}}" }}
